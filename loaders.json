@@ -1,0 +1,12 @@
+{
+  "$comment": "The seed of loaders[] in astra.games.index/1 (games-index-v1.md §2.4; merged plan §2.5): loader builds that ship OFF by default and are turned on only by Astra's own launch arguments. It labels, never grants: the launcher plans only from a manifest's [integration.loader]. Moderator acts (M_LOADERS_EDIT) add or remove rows on top of this seed; a change here is a pull request to main.",
+  "schema": "astra.games.loaders/1",
+  "loaders": [
+    {
+      "name": "doorstop-winhttp",
+      "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c",
+      "default_enabled": false,
+      "$source": "Doorstop's winhttp.dll proxy from BepInEx_win_x64_5.4.23.5.zip, unmodified; pinned in astra-bepinex runner/astra-gi.toml and runner/il2cpp/astra-gi.toml, shipped with doorstop_config.ini enabled=false and turned on by --doorstop-enabled true"
+    }
+  ]
+}

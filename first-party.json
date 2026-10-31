@@ -1,0 +1,22 @@
+{
+  "$comment": "First-party game-integration repositories, by GitHub repository_id (stable across renames and transfers), and the digest-pin rule of dev/game-integrations-plan-merged.md §5.1 (c). Changing this file is a pull request to main; the catalogue never writes it.",
+  "schema": "astra.games.first-party/1",
+  "publisher_account": "mihailinl",
+  "owner_id": 193032699,
+  "rule": {
+    "provenance": "digest-pin",
+    "require_pin": true,
+    "text": "A first-party release is admitted without a GitHub build attestation when (1) its repository_id and repository_owner_id equal a row below, (2) the downloaded asset's SHA-256 equals GitHub's own asset digest, and (3) a row in pins[] names the same repository_id, tag and asset with that SHA-256. A release with no pin is held (H_FIRST_PARTY_UNPINNED) until the owner's release script adds one; a pin that disagrees with the bytes is refused (E_PIN_MISMATCH). Community releases always need the attestation (A§4.1)."
+  },
+  "repos": [
+    { "name": "mihailinl/astra-bepinex", "repository_id": 1408152993, "repository_owner_id": 193032699, "release_workflow": false },
+    { "name": "mihailinl/astra-reshade", "repository_id": 1412685270, "repository_owner_id": 193032699, "release_workflow": false },
+    { "name": "mihailinl/astra-lethal", "repository_id": 1409552539, "repository_owner_id": 193032699, "release_workflow": true },
+    { "name": "mihailinl/astra-peak", "repository_id": 1409552680, "repository_owner_id": 193032699, "release_workflow": true },
+    { "name": "mihailinl/astra-content-warning", "repository_id": 1409552609, "repository_owner_id": 193032699, "release_workflow": true },
+    { "name": "mihailinl/astra-repo", "repository_id": 1409552749, "repository_owner_id": 193032699, "release_workflow": true },
+    { "name": "mihailinl/astra-gta-trilogy", "repository_id": 1427110216, "repository_owner_id": 193032699, "release_workflow": false },
+    { "name": "mihailinl/astra-in-death-stranding", "repository_id": 1405082830, "repository_owner_id": 193032699, "release_workflow": false }
+  ],
+  "pins": []
+}
