@@ -173,6 +173,30 @@ test("the client: an https base from GAMES_SERVICE_URL (production by default), 
   await assert.rejects(oidcToken({ env: {}, fetchImpl }), /id-token: write/);
 });
 
+test("the client mints a FRESH OIDC token for every call, never one cached across calls (contract 6.11.0 ID-33: a token's jti answers 'replay' on a second use)", async () => {
+  let tokenCalls = 0;
+  const seenAuth = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (url.startsWith("https://token.example")) {
+      tokenCalls += 1;
+      return new Response(JSON.stringify({ value: `oidc-jwt-${tokenCalls}` }));
+    }
+    if (init.headers?.Authorization) seenAuth.push(init.headers.Authorization);
+    if (url.endsWith("/bot/games/work")) return new Response(JSON.stringify({ acts: [], health: null }));
+    if (url.endsWith("/games/signed-wake")) return new Response(null, { status: 202 });
+    return new Response(JSON.stringify({ error: "invalid" }), { status: 400 });
+  };
+  const env = { ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.example/t?x=1", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "rt" };
+  const c = serviceClient({ env, fetchImpl });
+  await c.work();
+  await c.work();
+  await assert.rejects(c.leases({}));
+  assert.equal(tokenCalls, 3, "one fresh token minted per call, never reused");
+  assert.deepEqual(seenAuth, ["Bearer oidc-jwt-1", "Bearer oidc-jwt-2", "Bearer oidc-jwt-3"]);
+  assert.equal(await c.signedWake(), 202, "the wake carries no credential and mints no token either");
+  assert.equal(tokenCalls, 3, "signedWake never touches the token endpoint");
+});
+
 // ── sign.yml's work and report jobs ──────────────────────────────────────
 
 
