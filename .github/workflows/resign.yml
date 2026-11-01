@@ -18,7 +18,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: games-signing
+  group: publish-games
   cancel-in-progress: false
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
     name: Re-sign both documents
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: games-signing
+    environment: publish-games
     permissions:
       contents: write   # push the data branch
     steps:
@@ -42,6 +42,16 @@ jobs:
           ref: data
           path: catalogue-data
 
+      - name: Check out the published trust.json (astra-registry; verified under the compiled roots)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mihailinl/astra-registry
+          ref: main
+          path: registry
+          sparse-checkout: registry/v1/trust.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -51,7 +61,7 @@ jobs:
         env:
           GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
           GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
-        run: node bin/resign.mjs --data catalogue-data
+        run: node bin/resign.mjs --data catalogue-data --trust registry/registry/v1/trust.json
 
       - name: Push the documents to `data`
         env:

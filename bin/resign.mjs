@@ -7,7 +7,7 @@
 // so both documents are re-signed every day whether or not anything changed
 // — and held takedowns whose window has freed are admitted on the way.
 //
-//   node bin/resign.mjs --data <data-branch checkout>
+//   node bin/resign.mjs --data <data-branch checkout> --trust <trust.json>
 
 import fs from "node:fs";
 
@@ -15,10 +15,11 @@ import { runSign } from "../lib/pipeline.mjs";
 import { ROOT } from "../lib/vendored.mjs";
 
 const args = process.argv.slice(2);
-const data = args.indexOf("--data") >= 0 ? args[args.indexOf("--data") + 1] : null;
+const opt = (n) => (args.indexOf(n) >= 0 ? args[args.indexOf(n) + 1] : null);
+const data = opt("--data");
 try {
-  if (!data) throw new Error("usage: bin/resign.mjs --data <dir>");
-  const report = runSign({ dataDir: data, root: ROOT, env: process.env, now: Math.floor(Date.now() / 1000) });
+  if (!data || !opt("--trust")) throw new Error("usage: bin/resign.mjs --data <dir> --trust <trust.json>");
+  const report = runSign({ dataDir: data, root: ROOT, trustFile: opt("--trust"), env: process.env, now: Math.floor(Date.now() / 1000) });
   console.log(JSON.stringify(report));
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `issued_at=${report.issuedAt}\nkey_id=${report.keyId}\n`);
 } catch (e) {

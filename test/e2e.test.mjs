@@ -76,6 +76,6 @@ test("a non-owner publishes a C# GI and a foo-engine foundation; one run signs b
   const problems = verifyDocuments([
     { envelope: c.dist("games-index.json"), domain: INDEX_SCHEMA },
     { envelope: withdrawn, domain: WITHDRAWN_SCHEMA, indexBody: c.dist("games-index.json").signed },
-  ], { keys: c.keys, now: T0 });
+  ], { kindKeys: c.kindKeys, now: T0 });
   assert.deepEqual(problems, [[], []]);
 });

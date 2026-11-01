@@ -5,7 +5,8 @@
 # documents (A§5.1 promote.yml; A§4.4 M7; lib/promote.mjs): a first-party
 # release the index lists becomes stable, one a revoke covers goes back to
 # prerelease. It runs after a successful Sign, verifies both documents'
-# signatures against keys.json before acting, and never signs.
+# signatures under the games kind keys of the root-signed trust.json before
+# acting, and never signs.
 #
 # Its token is a GitHub App's, minted per run, limited to contents:write on
 # the first-party repositories; the App's private key is in the
@@ -48,6 +49,16 @@ jobs:
           path: catalogue-data
           persist-credentials: false
 
+      - name: Check out the published trust.json (astra-registry; verified under the compiled roots)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mihailinl/astra-registry
+          ref: main
+          path: registry
+          sparse-checkout: registry/v1/trust.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -65,4 +76,4 @@ jobs:
       - name: Promote and demote
         env:
           GH_APP_TOKEN: ${{ steps.app.outputs.token }}
-        run: node bin/promote.mjs --data catalogue-data --apply
+        run: node bin/promote.mjs --data catalogue-data --trust registry/registry/v1/trust.json --apply

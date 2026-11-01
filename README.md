@@ -51,9 +51,42 @@ the moment it passes, labelled **«Не проверено модератора�
 later mark it source-reviewed; that is a label, never a gate.
 
 **No author holds a signing key.** Authors publish ordinary GitHub releases.
-The only keys are the catalogue's two (`games-current`, `games-next`), and
-they live only in this repository's protected `games-signing` environment.
-The ingest job, which reads strangers' releases, holds no secret at all.
+The only keys are the catalogue's two, and they live only in this
+repository's protected `publish-games` environment (one environment per
+content kind, with the plugin registry's `publish` branch policy). The
+ingest job, which reads strangers' releases, holds no secret at all.
+
+**Which two keys, and who says so.** The games keys are authorised the same
+way as every other signing key Astra trusts: by the `kind_keys` member of the
+registry's `trust.json`, which the compiled ROOT keys sign. It names exactly
+two keys for kind `games`, a `current` and a `next`, both authorised in
+advance:
+
+```json
+{ "kind": "games", "role": "current", "key_id": "astra-games-2026a",
+  "alg": "ed25519", "public_key": "<base64, 32 bytes>", "not_before": "<RFC 3339>" }
+```
+
+- A games document is accepted only under one of those two keys. A key of
+  another kind (commands, characters, packs) or the plugin index's key is
+  refused for it, and a kind key never appears in `index_keys`. The signer
+  verifies `trust.json` under the compiled roots before it signs anything,
+  and refuses a secret that is not the authorised key of its role.
+- **The authorisation is long-lived; signatures are short-lived.** Each
+  document says `expires_at − issued_at` (7 days, never more than 8) and
+  carries `serial = issued_at` above a per-kind floor, so an old or stolen
+  document stops verifying within days and a still-trusted key cannot replay
+  an older one. There is no per-key lifetime.
+- **Routine rotation needs no ceremony and no client release**: put the next
+  key in `GAMES_SIGNING_KEY_NEXT`, and the signer switches to it; clients
+  already accept it. The key rotated away from is spent, and the signer never
+  goes back to it.
+- **A root ceremony** (the owner's one passphrase) happens only on a
+  compromise, when both games keys are spent, or to add a kind: it re-signs
+  `trust.json` without the bad key and with a fresh `next`.
+- Inside the document, `key_id` names the role (`games-current` or
+  `games-next`, as AstraPlugins' schema enumerates); the signature's
+  `key_id` names the key (`astra-games-2026a`).
 
 **Moderators act through the site**, each act confirmed with one 2FA, and
 every act is a public JSON file in this repository's history. Each act
@@ -71,7 +104,6 @@ abandoned code moves only by a moderator act that cites its evidence.
 |---|---|
 | `first-party.json` | the owner's repositories by GitHub `repository_id`, and the per-release digest pins |
 | `loaders.json` | the seed allowlist of loader builds that ship off by default (A§4.5); moderator acts add or remove on top |
-| `keys.json` | the published public keys of `games-current` and `games-next` (K14) |
 | `gi-probe.json` | the pinned `gi-probe` build ingest runs; null until astra-game-launcher 0.5.0, and ingest waits until then |
 | `.github/action-pins.json` | every action, by the commit its release tag peels to |
 | `fixtures/` | the staging fixtures ingest is tested against, and the list-shape recordings (R29) |
@@ -86,7 +118,7 @@ abandoned code moves only by a moderator act that cites its evidence.
 2. **Ingest** (`ingest.yml`, no secret) checks the release and uploads an
    unsigned candidate: `accept`, `hold` (a person decides), `wait` (retried)
    or `refuse`.
-3. **Sign** (`sign.yml`, `games-signing`) re-checks the candidate against the
+3. **Sign** (`sign.yml`, `publish-games`) re-checks the candidate against the
    schema and the catalogue's state, lists it, and re-signs both documents to
    the `data` branch under `dist/`.
 4. **Promote** (`promote.yml`) makes first-party GitHub releases match what

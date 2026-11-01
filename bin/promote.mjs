@@ -5,11 +5,12 @@
 // promote.yml's entry point: make the first-party repositories' GitHub
 // releases agree with the SIGNED documents (lib/promote.mjs).
 //
-//   node bin/promote.mjs --data <data-branch checkout> [--apply]
+//   node bin/promote.mjs --data <data-branch checkout> --trust <trust.json> [--apply]
 //
-// Without --apply it prints the plan. With --apply it needs GH_APP_TOKEN (the
-// first-party-promote environment's App token) and verifies both documents'
-// signatures against keys.json before acting on them.
+// Both documents' signatures are verified under the games kind keys of the
+// root-signed trust.json before anything is planned. Without --apply it
+// prints the plan; with --apply it needs GH_APP_TOKEN (the
+// first-party-promote environment's App token).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -17,22 +18,24 @@ import path from "node:path";
 import { INDEX_SCHEMA, verifyDocuments, WITHDRAWN_SCHEMA } from "../lib/documents.mjs";
 import { applyPlan, planReleases, releasesApi } from "../lib/promote.mjs";
 import { loadPolicy } from "../lib/state.mjs";
+import { loadTrust } from "../lib/trust.mjs";
 import { ROOT } from "../lib/vendored.mjs";
 
 const args = process.argv.slice(2);
-const data = args.indexOf("--data") >= 0 ? args[args.indexOf("--data") + 1] : null;
+const opt = (n) => (args.indexOf(n) >= 0 ? args[args.indexOf(n) + 1] : null);
+const data = opt("--data");
 try {
-  if (!data) throw new Error("usage: bin/promote.mjs --data <dir> [--apply]");
+  if (!data || !opt("--trust")) throw new Error("usage: bin/promote.mjs --data <dir> --trust <trust.json> [--apply]");
   const policy = loadPolicy(ROOT);
   const read = (f) => JSON.parse(fs.readFileSync(path.join(data, "dist", f), "utf8"));
   const index = read("games-index.json");
   const withdrawn = read("games-withdrawn.json");
   const now = Math.floor(Date.now() / 1000);
-  const keys = policy.keys?.keys ?? [];
+  const { kindKeys } = loadTrust({ file: opt("--trust"), now });
   const problems = verifyDocuments([
     { envelope: index, domain: INDEX_SCHEMA },
     { envelope: withdrawn, domain: WITHDRAWN_SCHEMA, indexBody: index.signed },
-  ], { keys, now }).flat();
+  ], { kindKeys, now }).flat();
   if (problems.length) throw new Error(`the signed documents do not verify, so nothing is promoted: ${problems.join("; ")}`);
   const plan = planReleases({ index: index.signed, withdrawn: withdrawn.signed, firstParty: policy.firstParty });
   if (!args.includes("--apply")) {

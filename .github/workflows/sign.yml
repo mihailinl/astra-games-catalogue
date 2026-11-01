@@ -10,9 +10,13 @@
 # astra.games.withdrawn/1, self-verifies them, and pushes the state and the
 # documents to the `data` branch.
 #
-# The signing secrets exist only in the `games-signing` environment, whose
-# deployment branch policy allows the default branch only; they are named
-# here and in resign.yml and nowhere else (test/workflows.test.mjs). The
+# The signing secrets exist only in the `publish-games` environment (one
+# environment per kind, with the registry `publish` environment's branch
+# policy: the default branch only); they are named here and in resign.yml
+# and nowhere else (test/workflows.test.mjs). Which keys they may be is
+# decided by trust.json's `kind_keys`, verified under the compiled root keys
+# before anything is signed (lib/trust.mjs): rotating to `next` is setting
+# GAMES_SIGNING_KEY_NEXT, nothing more. The
 # candidate is data from a job that read a stranger's release: it is re-
 # validated against the schema and the catalogue's state, and no zip is
 # opened here. Event payloads are read from the event file by bin/sign.mjs.
@@ -30,7 +34,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: games-signing
+  group: publish-games
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +43,7 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: games-signing
+    environment: publish-games
     permissions:
       contents: write   # push the data branch
       actions: read     # download the Ingest run's artifact
@@ -60,6 +64,16 @@ jobs:
           ref: data
           path: catalogue-data
 
+      - name: Check out the published trust.json (astra-registry; verified under the compiled roots)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mihailinl/astra-registry
+          ref: main
+          path: registry
+          sparse-checkout: registry/v1/trust.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -78,7 +92,7 @@ jobs:
         env:
           GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
           GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
-        run: node bin/sign.mjs --data catalogue-data --candidates "$RUNNER_TEMP/candidates" --from-event
+        run: node bin/sign.mjs --data catalogue-data --trust registry/registry/v1/trust.json --candidates "$RUNNER_TEMP/candidates" --from-event
 
       - name: Push the state and the documents to `data`
         id: push

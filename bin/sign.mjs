@@ -3,11 +3,14 @@
 // Copyright (C) 2026 Minice — https://minice.ai
 //
 // The signing job's entry point (sign.yml; resign.yml runs bin/resign.mjs).
-// Runs in the games-signing environment, the only place the signing secrets
+// Runs in the publish-games environment, the only place the signing secrets
 // exist; reads them from the environment, never from arguments.
 //
-//   node bin/sign.mjs --data <data-branch checkout> [--candidates <dir>] [--from-event]
+//   node bin/sign.mjs --data <data-branch checkout> --trust <trust.json> [--candidates <dir>] [--from-event]
 //
+//   --trust        the published, root-signed trust.json (astra-registry
+//                  registry/v1/trust.json); its `kind_keys` say which two keys
+//                  may sign the games documents (lib/trust.mjs)
 //   --candidates   a directory of candidate JSON files (ingest's artifact)
 //   --from-event   read $GITHUB_EVENT_NAME and $GITHUB_EVENT_PATH: a
 //                  repository_dispatch `games-act` carries one moderator act
@@ -47,11 +50,12 @@ function fromEvent() {
 
 try {
   const data = opt("--data");
-  if (!data) throw new Error("usage: bin/sign.mjs --data <dir> [--candidates <dir>] [--from-event]");
+  if (!data || !opt("--trust")) throw new Error("usage: bin/sign.mjs --data <dir> --trust <trust.json> [--candidates <dir>] [--from-event]");
   const { acts, health } = has("--from-event") ? fromEvent() : { acts: [], health: undefined };
   const report = runSign({
     dataDir: data,
     root: ROOT,
+    trustFile: opt("--trust"),
     env: process.env,
     now: Math.floor(Date.now() / 1000),
     candidates: readCandidates(opt("--candidates")),

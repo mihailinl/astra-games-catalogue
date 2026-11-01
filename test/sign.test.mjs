@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// Signing both documents (A§5.3-5.4; merged §2.2): the envelope verifies
-// under the vendored registry verifier, the bodies validate against the S
-// schemas through schemalite, serial = issued_at with a per-key floor, the
-// 7-day expiry, current/next and the ratchet, and the keys.json canary (K14).
+// Signing both documents (A§5.3; merged §2.2): the envelope verifies under
+// the vendored registry verifier, the bodies validate against the S schemas
+// through schemalite, serial = issued_at with the per-kind floor, and the
+// signature's life under 8 days. Which keys may sign is test/trust.test.mjs.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
 import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, verifyDocument, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
 import { validateMany } from "../lib/schemas.mjs";
-import { nextIssuedAt, selectSigner } from "../lib/signing.mjs";
+import { nextIssuedAt, selectSigner, signBoth } from "../lib/signing.mjs";
 import { emptyModeration } from "../lib/state.mjs";
 import { candidate, FOO_DESCRIPTOR, makeCatalogue, T0 } from "./catalogue.mjs";
 import { throwawayKey } from "./helpers.mjs";
@@ -25,7 +25,7 @@ test("both documents are signed in one run, verify under the registry's verifier
   assert.deepEqual(r.accepted.map((a) => a.result), ["listed", "listed"]);
   const index = c.dist("games-index.json");
   const withdrawn = c.dist("games-withdrawn.json");
-  const pub = [{ key_id: "games-current", publicKey: publicKeyFromBase64(c.current.publicB64) }];
+  const pub = [{ key_id: "astra-games-2026a", publicKey: publicKeyFromBase64(c.current.publicB64) }];
   assert.equal(verifyEnvelope(index, INDEX_SCHEMA, pub).ok, true);
   assert.equal(verifyEnvelope(withdrawn, WITHDRAWN_SCHEMA, pub).ok, true);
   assert.equal(verifyEnvelope(index, WITHDRAWN_SCHEMA, pub).ok, false, "the domain is the verifier's, so an index is not a withdrawn list");
@@ -36,44 +36,46 @@ test("both documents are signed in one run, verify under the registry's verifier
   assert.equal(index.signed.issued_at, T0);
   assert.equal(index.signed.expires_at, T0 + 7 * 86400);
   assert.equal(withdrawn.signed.issued_at, index.signed.issued_at, "one issued_at for both");
-  assert.equal(index.signed.key_id, "games-current");
+  assert.equal(index.signed.key_id, "games-current", "the body names the ROLE (the schema's enum)");
+  assert.equal(index.signatures[0].key_id, "astra-games-2026a", "the signature names the kind key");
   assert.deepEqual(index.signed.engine_codes, { "foo-engine": { account: "author", repo_id: index.signed.entries.find((e) => e.kind === "foundation").publisher.repo_id, repo_owner_id: 800000001 } });
   assert.equal(index.signed.loaders[0].name, "doorstop-winhttp", "the loaders.json seed is served");
 });
 
-test("serial = issued_at, strictly above the key's floor; a floor more than a day ahead refuses", () => {
+test("serial = issued_at, strictly above the kind's floor; a floor more than a day ahead refuses", () => {
   const c = makeCatalogue();
   c.sign();
   c.sign();
   assert.equal(c.dist("games-index.json").signed.serial, T0 + 1, "a second run in the same second still moves forward");
-  assert.equal(nextIssuedAt({ now: 100, floors: { "games-current": { index: 50, withdrawn: 99 } }, keyId: "games-current" }), 100);
-  assert.throws(() => nextIssuedAt({ now: 100, floors: { "games-current": { index: 100 + 86400, withdrawn: 0 } }, keyId: "games-current" }), /E_SERIAL_AHEAD/);
+  assert.deepEqual(c.state("floors.json"), { kind: "games", index: T0 + 1, withdrawn: T0 + 1, spent: [] });
+  assert.equal(nextIssuedAt({ now: 100, floors: { index: 50, withdrawn: 99 } }), 100);
+  assert.equal(nextIssuedAt({ now: 100, floors: { index: 150, withdrawn: 99 } }), 151);
+  assert.throws(() => nextIssuedAt({ now: 100, floors: { index: 100 + 86400, withdrawn: 0 } }), /E_SERIAL_AHEAD/);
 });
 
-test("current signs until next is provisioned; next then signs, and current is retired for good", () => {
+test("expiry: a signature lives 7 days, and nothing longer than 8 days is ever signed", () => {
   const c = makeCatalogue();
   c.sign();
-  assert.equal(c.dist("games-index.json").signed.key_id, "games-current");
-  const withNext = { ...c.env, GAMES_SIGNING_KEY_NEXT: c.next.seedB64 };
-  c.sign({ env: withNext });
-  const idx = c.dist("games-index.json");
-  assert.equal(idx.signed.key_id, "games-next");
-  assert.equal(idx.signatures[0].key_id, "games-next");
-  assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 } }), /E_KEY_RETIRED/);
+  for (const f of ["games-index.json", "games-withdrawn.json"]) {
+    const b = c.dist(f).signed;
+    assert.equal(b.expires_at - b.issued_at, 7 * 86400);
+    assert.ok(b.expires_at - b.issued_at <= 8 * 86400);
+  }
+  const signer = selectSigner({ env: c.env, floors: {}, kindKeys: c.kindKeys, now: T0 });
+  const state = { entries: [], engineCodes: {}, moderation: emptyModeration(), withdrawn: { rows: [], held: [] }, health: {}, floors: {} };
+  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, signer, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 + 1 }), /E_EXPIRY_TOO_LONG/);
+  const eight = signBoth({ state, seedLoaders: { loaders: [] }, signer, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 });
+  assert.equal(eight.index.signed.expires_at - eight.index.signed.issued_at, 8 * 86400, "exactly 8 days is within the cap");
 });
 
-test("K14: the signer refuses a key keys.json does not publish, and refuses to run with no key", () => {
+test("the signer refuses to run with no key, and a refused run writes nothing", () => {
   const c = makeCatalogue();
-  const stranger = throwawayKey();
-  assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: stranger.seedB64 } }), /E_KEY_NOT_PUBLISHED/);
   assert.throws(() => c.sign({ env: {} }), /E_KEY_ABSENT/);
-  assert.throws(() => selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 }, floors: {}, keys: [{ key_id: "games-current", public_key: null }] }), /E_KEY_NOT_PUBLISHED/);
-  assert.equal(fs.existsSync(path.join(c.data, "dist")), false, "a refused run writes nothing");
+  assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: throwawayKey().seedB64 } }), /E_KEY_NOT_AUTHORISED/);
+  assert.equal(fs.existsSync(path.join(c.data, "dist")), false);
 });
 
-test("K14: the repository's keys.json names exactly the two compiled key ids", () => {
-  const keys = JSON.parse(fs.readFileSync(new URL("../keys.json", import.meta.url), "utf8"));
-  assert.deepEqual(keys.keys.map((k) => k.key_id).sort(), ["games-current", "games-next"]);
+test("the body's key_id enum in the pinned schema names roles, which is what the body carries", () => {
   const schema = JSON.parse(fs.readFileSync(new URL("../lib/vendor/astraplugins/spec/games/schemas/games-index-v1.schema.json", import.meta.url), "utf8"));
   assert.deepEqual([...schema.properties.key_id.enum].sort(), ["games-current", "games-next"]);
 });
@@ -83,7 +85,7 @@ test("a tampered document fails verification", () => {
   c.sign({ candidates: [candidate()] });
   const idx = c.dist("games-index.json");
   idx.signed.entries[0].source.sha256 = "0".repeat(64);
-  assert.ok(verifyDocument(idx, { domain: INDEX_SCHEMA, keys: c.keys, now: T0 }).some((p) => p.startsWith("signature")));
+  assert.ok(verifyDocument(idx, { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }).some((p) => p.startsWith("signature")));
 });
 
 test("first-party prereleases are stored, not listed", () => {
@@ -154,18 +156,24 @@ test("K12: every index and withdrawn golden gets the verdict vectors.json record
   });
 });
 
-test("bin/keygen.mjs writes a 0600 seed, refuses to overwrite, and prints only the public half", async () => {
+test("bin/keygen.mjs writes a 0600 seed, refuses to overwrite, and prints only the kind_keys row", async () => {
   const { execFileSync } = await import("node:child_process");
   const { tmpdir } = await import("./helpers.mjs");
-  const out = path.join(tmpdir(), "games-current.ed25519"); // a throwaway path, never the real key directory
-  const printed = execFileSync(process.execPath, [new URL("../bin/keygen.mjs", import.meta.url).pathname, "--key-id", "games-current", "--out", out], { encoding: "utf8" });
+  const out = path.join(tmpdir(), "astra-games-2026a.ed25519"); // a throwaway path, never the real key directory
+  const keygen = new URL("../bin/keygen.mjs", import.meta.url).pathname;
+  const argv = ["--role", "current", "--key-id", "astra-games-2026a", "--not-before", "2026-10-01T00:00:00Z", "--out", out];
+  const printed = execFileSync(process.execPath, [keygen, ...argv], { encoding: "utf8" });
   const row = JSON.parse(printed);
-  assert.equal(row.key_id, "games-current");
+  assert.deepEqual(Object.keys(row).sort(), ["alg", "key_id", "kind", "not_before", "public_key", "role"]);
+  assert.equal(row.kind, "games");
+  assert.equal(row.alg, "ed25519");
   assert.equal(Buffer.from(row.public_key, "base64").length, 32);
   assert.equal(fs.statSync(out).mode & 0o777, 0o600);
   const seed = fs.readFileSync(out, "utf8").trim();
   assert.ok(!printed.includes(seed), "the seed is never printed");
-  const signer = selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: seed }, floors: {}, keys: [row] });
+  const other = throwawayKey();
+  const kindKeys = { current: { ...row, notBefore: Math.floor(Date.parse(row.not_before) / 1000) }, next: { ...row, role: "next", key_id: "astra-games-2026b", public_key: other.publicB64, notBefore: 0 } };
+  const signer = selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: seed }, floors: {}, kindKeys, now: T0 });
   assert.equal(signer.public_key, row.public_key);
-  assert.throws(() => execFileSync(process.execPath, [new URL("../bin/keygen.mjs", import.meta.url).pathname, "--key-id", "games-current", "--out", out], { stdio: "pipe" }));
+  assert.throws(() => execFileSync(process.execPath, [keygen, ...argv], { stdio: "pipe" }));
 });

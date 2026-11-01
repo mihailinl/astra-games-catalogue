@@ -69,7 +69,7 @@ for (const type of Object.keys(ACTS)) {
     assert.ok(withdrawn.signed.issued_at > before.withdrawn.signed.issued_at, "withdrawn re-signed");
     assert.notEqual(index.signatures[0].sig, before.index.signatures[0].sig);
     assert.notEqual(withdrawn.signatures[0].sig, before.withdrawn.signatures[0].sig);
-    const problems = verifyDocuments([{ envelope: index, domain: INDEX_SCHEMA }, { envelope: withdrawn, domain: WITHDRAWN_SCHEMA, indexBody: index.signed }], { keys: c.keys, now: T0 });
+    const problems = verifyDocuments([{ envelope: index, domain: INDEX_SCHEMA }, { envelope: withdrawn, domain: WITHDRAWN_SCHEMA, indexBody: index.signed }], { kindKeys: c.kindKeys, now: T0 });
     assert.deepEqual(problems, [[], []]);
     const recorded = JSON.parse(fs.readFileSync(path.join(c.data, "acts", "000001.json"), "utf8"));
     assert.equal(recorded.type, type);

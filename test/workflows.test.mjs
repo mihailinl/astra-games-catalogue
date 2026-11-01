@@ -7,7 +7,7 @@
 //   - the ingest job holds NO secret: no `secrets.`, no environment, no write
 //     permission, no push;
 //   - the signing secrets are named only in sign.yml and resign.yml, only
-//     inside the job that declares `environment: games-signing`;
+//     inside the job that declares `environment: publish-games`;
 //   - every action is pinned by the commit in .github/action-pins.json (the
 //     PEELED commit of its tag);
 //   - deny-by-default permissions at the top, a minimal set per job;
@@ -95,7 +95,7 @@ test("the ingest job holds no signing secret, no secret at all, and cannot write
   }
 });
 
-test("the signing secrets are named only in sign.yml and resign.yml, inside the games-signing job", () => {
+test("the signing secrets are named only in sign.yml and resign.yml, inside the publish-games job", () => {
   for (const f of files) {
     const t = read(f);
     const named = SIGNING.filter((s) => t.split("\n").some((l) => !l.trimStart().startsWith("#") && l.includes(s)));
@@ -103,8 +103,8 @@ test("the signing secrets are named only in sign.yml and resign.yml, inside the 
       assert.deepEqual(named, SIGNING, `${f} should pass both`);
       for (const [name, lines] of Object.entries(jobs(t))) {
         const uses = lines.some((l) => SIGNING.some((s) => l.includes(`secrets.${s}`)));
-        if (uses) assert.ok(lines.some((l) => /^ {4}environment:\s*games-signing\s*$/.test(code(l))), `${f} job ${name} uses the signing secrets outside games-signing`);
-        else assert.ok(!lines.some((l) => /environment:\s*games-signing/.test(l)), `${f} job ${name} enters games-signing without needing it`);
+        if (uses) assert.ok(lines.some((l) => /^ {4}environment:\s*publish-games\s*$/.test(code(l))), `${f} job ${name} uses the signing secrets outside publish-games`);
+        else assert.ok(!lines.some((l) => /environment:\s*publish-games/.test(l)), `${f} job ${name} enters publish-games without needing it`);
       }
       for (const s of SIGNING) {
         for (const l of t.split("\n").filter((x) => x.includes(s) && !x.trimStart().startsWith("#"))) {
@@ -159,6 +159,6 @@ test("no `${{ }}` expression inside any run: script, and no pull_request_target"
 test("the signer and the re-signer share one concurrency group; nothing cancels a signing run", () => {
   for (const f of ["sign.yml", "resign.yml"]) {
     const t = read(f);
-    assert.match(t, /concurrency:\n\s+group: games-signing\n\s+cancel-in-progress: false/);
+    assert.match(t, /concurrency:\n\s+group: publish-games\n\s+cancel-in-progress: false/);
   }
 });
