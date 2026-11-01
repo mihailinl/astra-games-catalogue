@@ -1,0 +1,23 @@
+# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/content/releases/gltf-relative-uri/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a .gltf naming a sibling buffer the release holds -- accepted.
+schema = 1
+
+[integration]
+id = "someone.gltf-relative-uri"
+name = "glTF Relative URI"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "models/prop.gltf"
+kind = "art"
+title = "Prop"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

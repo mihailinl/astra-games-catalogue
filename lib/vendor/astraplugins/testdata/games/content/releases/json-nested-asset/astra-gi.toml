@@ -1,0 +1,17 @@
+# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/content/releases/json-nested-asset/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a JSON config whose NESTED object has an asset key -- accepted: the
+# content catalogue's sniff reads only the top-level keys (manifest.md §2.7.1).
+schema = 1
+
+[integration]
+id = "someone.json-nested-asset"
+name = "Json Nested Asset"
+version = "0.1.0"
+license = "MIT"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

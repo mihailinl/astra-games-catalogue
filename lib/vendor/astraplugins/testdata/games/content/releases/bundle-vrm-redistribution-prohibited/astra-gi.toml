@@ -1,0 +1,25 @@
+# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/content/releases/bundle-vrm-redistribution-prohibited/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: the content catalogue's vrm-redistribution-prohibited.astrachar, byte for
+# byte, as a game integration's character part -- E_CONTENT_LICENCE_REFUSED by that contract's own
+# code (manifest.md §2.7.3; ingest-v1.md §3 step 11).
+schema = 1
+
+[integration]
+id = "someone.bundle-vrm-redistribution-prohibited"
+name = "Bundle Vrm Redistribution Prohibited"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "characters/scout.astrachar"
+kind = "character"
+title = "scout"
+credit = "someone"
+licence = "CC-BY-4.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"
