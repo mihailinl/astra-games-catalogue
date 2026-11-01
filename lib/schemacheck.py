@@ -16,7 +16,8 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
         -> {"ok": true, "undeclared": [...], "missing": [...], "duplicates": [...],
             "parts": [{"path","sha256","licence_source","vrm_licence"?}],
             "licence_refusals": [...], "licence_conflicts": [...], "licence_unknown": [...],
-            "licence_undeclared": [...], "format_refusals": [{"path","detail"}, ...], "gaps": [...]}
+            "licence_undeclared": [...], "format_refusals": [{"path","detail"}, ...],
+            "bundle_refusals": [{"path","code","detail"}, ...]}
          | {"ok": false, "error": "..."}
     python3 lib/schemacheck.py zipcheck ZIP
         -> {"ok": true} | {"ok": false, "error": "..."}   (Zip Cloaking, see verify_zip_headers)
@@ -47,10 +48,22 @@ name: an avatar (VRM, VRMC_vrm) in any part, an animation
 (VRMC_vrm_animation) never, a plain glTF/GLB only in a "character" part. An
 unrecognised licence or permission token is never read as allowed -- it is
 "unknown" (O-2b/O-2c), flagged the same way a no-meta file is.
+
+Every rule the games gate shares with the content catalogue (AstraPlugins
+#129) is CALLED from the content contract's own reference checker, vendored
+under lib/vendor/astraplugins/tools/ (check-content-goldens.py with
+contentlite.py), never restated here: the text-glTF sniff and the GLB name
+rule over EVERY entry, the `%?#\\` uri rule, the 16 MiB / depth-128 / 32 MiB
+caps and the .gltf byte-order-mark rule, and a whole embedded
+.astrachar/.astrapack through `ingest_bundle` (walk_zip, ingest-v1.md §3
+steps 1-8, 10, 11, 12), its refusal keeping content's own code.
+test/content.test.mjs runs every testdata/games/content/releases/ golden
+(vendored) through this file and requires its vectors.json verdict.
 """
 
 from __future__ import annotations
 
+import codecs
 import datetime
 import hashlib
 import io
@@ -68,6 +81,22 @@ HERE = pathlib.Path(__file__).resolve().parent
 VENDOR = HERE / "vendor" / "astraplugins"
 sys.path.insert(0, str(VENDOR / "tools"))
 import schemalite  # noqa: E402
+
+
+def _load_content_checker():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("check_content_goldens", VENDOR / "tools" / "check-content-goldens.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# The content contract's own reference checker (AstraPlugins
+# spec/content/ingest-v1.md §3-§4), vendored byte for byte with
+# tools/contentlite.py: every rule the games catalogue shares with the
+# content catalogue is CALLED from it, never restated here (manifest.md
+# §2.7.1, §2.7.3 at AstraPlugins #129).
+CG = _load_content_checker()
 
 SCHEMAS = {
     "games-index-v1": VENDOR / "spec/games/schemas/games-index-v1.schema.json",
@@ -246,6 +275,17 @@ def _strict_json(data: bytes):
         return json.loads(data.decode("utf-8"), object_pairs_hook=_no_duplicate_members)
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         raise GltfFormatError(f"the glTF JSON does not parse: {e}") from None
+    except RecursionError:
+        # thousands of levels deep: the parser's own stack gives out first --
+        # a file this gate refuses, never a crash of the gate itself
+        raise GltfFormatError("the glTF JSON does not parse: it nests too deep to read") from None
+
+
+def _cap_problem(path, raw: bytes):
+    """The content catalogue's own `gltf_problem`: a JSON chunk or `.gltf`
+    over 16 MiB (checked before parsing), JSON that does not parse
+    (RecursionError included) or is not an object, nesting deeper than 128."""
+    return CG.gltf_problem(path or "", raw)
 
 
 def parse_glb_strict(raw: bytes) -> dict:
@@ -266,40 +306,39 @@ def parse_glb_strict(raw: bytes) -> dict:
     chunk_len = int.from_bytes(raw[12:16], "little")
     if 20 + chunk_len > len(raw):
         raise GltfFormatError("the GLB's JSON chunk runs past the end of the file")
+    why = _cap_problem(None, raw)
+    if why:
+        raise GltfFormatError(f"the GLB's {why}" if why.startswith("its ") else f"the GLB has {why}")
     doc = _strict_json(raw[20:20 + chunk_len])
     if not isinstance(doc, dict):
         raise GltfFormatError("the glTF JSON is not an object")
     return doc
 
 
-def gltf_uri_problem(doc: dict, is_glb: bool, path, present) -> str | None:
-    """No external reference (ingest-v1.md §3 step 10): in a GLB every
-    `images[].uri` and `buffers[].uri` is a `data:` URI; in a `.gltf` each is
-    a `data:` URI or a plain relative path -- no scheme, no `..`, no leading
-    `/`, no backslash -- naming a file the release holds (`present`, a set of
-    release-relative paths; None skips that last test)."""
+class _AnyFile:
+    """`present` when there is no release to look in: every relative name is
+    taken to exist, so only the shape of the uri is judged."""
+
+    def __contains__(self, _name) -> bool:
+        return True
+
+
+def gltf_uri_problem(raw: bytes, doc: dict, path, present) -> str | None:
+    """No external reference: the content catalogue's own `uri_refusal`. In
+    a GLB every `images[].uri` and `buffers[].uri` is a `data:` URI; in a
+    `.gltf` a `data:` URI or a relative path with no scheme, no `..`, no
+    leading `/` and no `%`, `?`, `#` or `\\` -- a loader percent-decodes
+    before it joins, so `..%2f..%2fetc%2fpasswd` leaves the release even
+    beside a file of that literal name (N2) -- naming a file the release
+    holds. No own-part test: a game integration's part is one file. An
+    `images`/`buffers` that is not an array is refused first (content's
+    reader skips an object, whose "0" key a JavaScript loader still reads,
+    and raises on a number)."""
     for key in ("images", "buffers"):
-        items = doc.get(key)
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            if not isinstance(item, dict) or "uri" not in item:
-                continue
-            u = item["uri"]
-            if not isinstance(u, str):
-                return f"a {key} uri that is not a string: {u!r}"
-            if u.startswith("data:"):
-                continue
-            if is_glb:
-                return f"a GLB names an external uri {u!r}"
-            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", u) or u.startswith("/") or "\\" in u \
-                    or "/../" in f"/{u}/" or u in ("", "."):
-                return f"a uri that is not a plain relative path: {u!r}"
-            if present is not None and path is not None:
-                target = posixpath.normpath(posixpath.join(posixpath.dirname(path), u))
-                if target not in present:
-                    return f"a uri naming a file the release does not hold: {u!r}"
-    return None
+        if key in doc and not isinstance(doc[key], list):
+            return f"{key} is not an array: {type(doc[key]).__name__}"
+    where = present if present is not None and path is not None else _AnyFile()
+    return CG.uri_refusal(path or "", raw, where, {})
 
 
 def gltf_format_problem(raw: bytes, path=None, present=None) -> str | None:
@@ -309,13 +348,19 @@ def gltf_format_problem(raw: bytes, path=None, present=None) -> str | None:
     is_glb = raw[:4] == b"glTF"
     if not is_glb and not (path is not None and path.lower().endswith(".gltf")):
         return None
+    if not is_glb:
+        # glTF 2.0 is UTF-8 JSON without a byte-order mark: any BOM on a .gltf
+        # is refused by the content catalogue's own rule -- on a .gltf only
+        why = CG.bom_refusal(path, raw) or _cap_problem(path, raw)
+        if why:
+            return f"a .gltf that {why}" if why.startswith("begins") else why
     try:
         doc = parse_glb_strict(raw) if is_glb else _strict_json(raw)
     except GltfFormatError as e:
         return str(e)
     if not isinstance(doc, dict):
         return "the glTF JSON is not an object"
-    return gltf_uri_problem(doc, is_glb, path, present)
+    return gltf_uri_problem(raw, doc, path, present)
 
 
 def extract_vrm_metas_doc(doc):
@@ -522,35 +567,156 @@ def vrm_gate(raw, path=None, present=None):
     return {"status": "ok", "vrm_licence": vrm_licence, "refusal": None}
 
 
-def read_astrachar_body_vrm(outer_zip, entry_name):
-    """The body inside a .astrachar bundle, gated the same as a bare .vrm,
-    WHEN the bundle's format is readable (astra-companion docs/character-
-    files-and-2d-editor.md §1.3/§1.4). Returns (gate_or_None,
-    gap_reason_or_None) -- a gap (the bundle itself unreadable) is never a
-    refusal; `gate` is `vrm_gate`'s own result when it is."""
+# ── content by bytes, for EVERY entry (manifest.md §2.7.1, AstraPlugins #129) ──
+# A name never decides whether a file is content: a GLB under any name but
+# .vrm/.glb/.vrma, a text glTF under any name but .gltf (the content
+# catalogue's own `is_gltf_json`), or a bundle -- a zip whose last entry is
+# astrachar.json, by content's own `walk_zip` -- under any name but
+# .astrachar/.astrapack is E_CONTENT_FORMAT. Two deliberate differences from
+# the content catalogue, because a game integration ships arbitrary files: a
+# UTF-16/32 byte-order mark is not refused (localisation files carry one) --
+# such a text is sniffed as what it decodes to -- and above 16 MiB a
+# JSON-looking file is refused only when its bytes name an `asset` key,
+# plainly or \u-escaped, read in chunks instead of the per-character sniff.
+
+BUNDLE_EXTS = (".astrachar", ".astrapack")
+_BOM_CODECS = dict(zip(CG.UNICODE_BOMS, ("utf-32-be", "utf-32-le", "utf-16-le", "utf-16-be")))
+_ASSET_KEY = re.compile(rb'"(?:a|\\u0061)(?:s|\\u0073)(?:s|\\u0073)(?:e|\\u0065)(?:t|\\u0074)"')
+_STREAM_CHUNK = 1024 * 1024
+
+
+def _bom_of(raw: bytes):
+    for bom, codec in _BOM_CODECS.items():
+        if raw.startswith(bom):
+            return bom, codec
+    return b"", None
+
+
+def sniff_text(raw: bytes) -> bytes:
+    """The UTF-8 text a BOM-honouring reader (fetch().text()) sees."""
+    bom, codec = _bom_of(raw)
+    return raw[len(bom):].decode(codec, "replace").encode("utf-8") if codec else raw
+
+
+def is_text_gltf(raw: bytes) -> bool:
+    """The content catalogue's own text-glTF sniff over the decoded text, and
+    the cheap asset-key test above 16 MiB."""
+    text = sniff_text(raw)
+    if len(raw) > CG.MAX_GLTF_JSON:
+        body = text[len(CG.UTF8_BOM):] if text.startswith(CG.UTF8_BOM) else text
+        return body.lstrip(b" \t\r\n")[:1] == b"{" and _ASSET_KEY.search(body) is not None
+    return CG.is_gltf_json(text)
+
+
+def _json_looking(head: bytes) -> bool:
+    text = sniff_text(head)
+    text = text[len(CG.UTF8_BOM):] if text.startswith(CG.UTF8_BOM) else text
+    first = text.lstrip(b" \t\r\n")[:1]
+    return first in (b"{", b"")  # b"": only whitespace so far -- look at the whole file
+
+
+def _stream_search(z, info, pattern, decode: bool) -> bool:
+    """Does the entry's (decoded) text match `pattern`, read in chunks? For
+    entries too large to hold whole."""
+    with z.open(info) as f:
+        first = f.read(4)
+        bom, codec = _bom_of(first) if decode else (b"", None)
+        dec = codecs.getincrementaldecoder(codec)("replace") if codec else None
+        pending, tail = first[len(bom):], b""
+        while True:
+            chunk = pending + f.read(_STREAM_CHUNK)
+            pending = b""
+            if not chunk:
+                return False
+            data = dec.decode(chunk).encode("utf-8") if dec else chunk
+            buf = tail + data
+            if pattern.search(buf):
+                return True
+            tail = buf[-64:]
+
+
+_BUNDLE_MANIFEST_NAME = re.compile(re.escape(b"astrachar.json"))
+
+
+def is_bundle_bytes(raw: bytes) -> bool:
+    """ingest-v1.md §3: a bundle is a zip whose LAST entry is astrachar.json,
+    read with content's own walk_zip -- only an archive Astra's importer would
+    open as a bundle counts."""
+    if not _is_zip(raw[:4]) or b"astrachar.json" not in raw:
+        return False
     try:
-        with outer_zip.open(entry_name) as f:
-            raw = f.read(ASTRACHAR_CAP + 1)
-        if len(raw) > ASTRACHAR_CAP:
-            return None, "astrachar_too_large"
-        inner = zipfile.ZipFile(io.BytesIO(raw))
-        with inner.open("astrachar.json") as f:
-            char = json.loads(f.read(1024 * 1024 + 1))
-        if char.get("format") != "astra.character":
-            return None, "astrachar_bad_format"
-        body = char.get("body")
-        if not isinstance(body, dict) or not isinstance(body.get("file"), str):
-            return None, "astrachar_body_not_a_file"  # ref / omitted / null / missing key
-        body_path = body["file"]
-        if not body_path.lower().endswith(".vrm"):
-            return None, "astrachar_body_not_vrm"
-        with inner.open(body_path) as f:
-            body_bytes = f.read(CONTENT_ENTRY_CAP + 1)
-        if len(body_bytes) > CONTENT_ENTRY_CAP or not _is_glb(body_bytes[:32]):
-            return None, "astrachar_body_unreadable"
-        return vrm_gate(body_bytes, body_path), None
-    except (zipfile.BadZipFile, KeyError, json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        return None, f"astrachar_unreadable: {type(e).__name__}"
+        order = json.loads(CG.walk_zip(raw)["\0order"])
+    except Exception:  # noqa: BLE001 -- refused or unreadable: no importer opens it as a bundle
+        return False
+    return bool(order) and order[-1] == "astrachar.json"
+
+
+def _read_whole(z, info, cap):
+    with z.open(info) as f:
+        raw = f.read(cap + 1)
+    return raw if len(raw) <= cap else None
+
+
+def name_problem(z, info, head: bytes, raw) -> str | None:
+    """Why an entry's name and its bytes disagree (E_CONTENT_FORMAT), or None.
+    `head` is its first bytes; `raw` its whole bytes when already read."""
+    name = info.filename
+    low = name.lower()
+    if head[:4] == CG.GLB_MAGIC:
+        return None if CG.name_matches_magic(name, head) else "a GLB (it begins with glTF) named something not .vrm, .glb or .vrma"
+    if not low.endswith(".gltf") and _json_looking(head):
+        if info.file_size > CG.MAX_GLTF_JSON:
+            if _stream_search(z, info, _ASSET_KEY, decode=True):
+                return f"a JSON text over 16 MiB ({info.file_size} bytes) that names an asset key, named something not .gltf"
+        else:
+            data = raw if raw is not None else _read_whole(z, info, CG.MAX_GLTF_JSON)
+            if data is not None and is_text_gltf(data):
+                return "a text glTF (a JSON object with a top-level asset member) named something not .gltf"
+    if _is_zip(head[:4]) and not low.endswith(BUNDLE_EXTS) and info.file_size <= ASTRACHAR_CAP \
+            and _stream_search(z, info, _BUNDLE_MANIFEST_NAME, decode=False):
+        data = raw if raw is not None else _read_whole(z, info, ASTRACHAR_CAP)
+        if data is not None and is_bundle_bytes(data):
+            return "a content bundle (a zip whose last entry is astrachar.json) named something not .astrachar or .astrapack"
+    return None
+
+
+# ── an embedded .astrachar / .astrapack (manifest.md §2.7.3) ──────────────
+# Judged by the content contract's OWN `ingest_bundle`: walk_zip and
+# ingest-v1.md §3 steps 1-8, 10, 11 and step 12's every-file-in-a-part rule.
+# Step 9 (the server's blocklist) has no list here; step 12's parts-mismatch
+# half has no declared digests to compare. The part's declared licence
+# stands for every part of the bundle (content's `declared_licence`).
+# Content's Unknown (held there) is F_CONTENT_VRM_META_UNKNOWN here, and a
+# refusal keeps content's own code, its detail prefixed `<path>!`.
+
+def _bundle_layout(raw: bytes):
+    """(part roots, body path, body bytes) by content's own reading, or
+    ([], None, None) when it cannot read that far."""
+    try:
+        files = CG.walk_zip(raw)
+        files.pop("\0order", None)
+        man = CG.C.strict_loads(files["astrachar.json"])
+        body = (man.get("body") or {}).get("file")
+        settings = (man.get("character") or {}).get("dir")
+        parts = CG.parts_of(files, body, settings, strict=False, pack=CG.pack_kind(man))
+        return sorted(root for _kind, root in parts), body, files.get(body) if isinstance(body, str) else None
+    except Exception:  # noqa: BLE001 -- ingest_bundle then refuses with the step that failed
+        return [], None, None
+
+
+def bundle_verdict(path: str, raw: bytes, licence) -> dict:
+    """{"status": "ok"|"unknown"|"bundle", "refusal": {"code","detail"}|None,
+    "body": (path, bytes)|None}."""
+    roots, body_path, body = _bundle_layout(raw)
+    try:
+        got = CG.ingest_bundle(raw, {"declared_licence": roots if licence else []})
+    except CG.Refusal as r:
+        return {"status": "bundle", "refusal": {"code": r.code, "detail": f"{path}!{r.detail}"}, "body": None}
+    except Exception as e:  # noqa: BLE001 -- content's reader raised on a hostile shape: refuse, never crash
+        return {"status": "bundle", "body": None, "refusal": {
+            "code": "E_CONTENT_FORMAT", "detail": f"{path}!: the content checker cannot read it ({type(e).__name__}: {e})"}}
+    status = "unknown" if "F_CONTENT_VRM_META_UNKNOWN" in got["flags"] else "ok"
+    return {"status": status, "refusal": None, "body": (body_path, body) if body is not None else None}
 
 
 # ── Zip Cloaking ─────────────────────────────────────────────────────────
@@ -933,7 +1099,10 @@ def content_report(zip_path, declared):
     manifest's `[[integration.content]]` array (a list of dicts). Runs
     verify_zip_headers FIRST (Zip Cloaking): a release whose local headers
     disagree with its own central directory is refused before anything is
-    classified as content at all."""
+    classified as content at all. Then EVERY entry is read by its bytes
+    (§2.7.1), every GLB and .gltf is held to the format rules and caps, the
+    release's glTF JSON budget is summed from headers, and every declared
+    .astrachar/.astrapack is judged by the content contract's own code."""
     zh = verify_zip_headers(zip_path)
     if not zh["ok"]:
         return {"ok": False, "error": zh["error"]}
@@ -944,71 +1113,80 @@ def content_report(zip_path, declared):
 
     content_files = []
     parts_by_path = {}
-    gaps = []
-    # Every file path in the release zip (not only the content-typed ones):
-    # what a `.gltf`'s plain relative buffer/image uri may name
-    # (gltf_uri_problem's `present`, AstraPlugins 4976d60).
-    present = set()
+    format_refusals = []
+    format_paths = set()
+
+    def format_refuse(path, detail):
+        if path not in format_paths:
+            format_paths.add(path)
+            format_refusals.append({"path": path, "detail": detail})
+
     with z:
-        for info in z.infolist():
-            if info.is_dir():
-                continue
-            present.add(info.filename)
-            ext = pathlib.PurePosixPath(info.filename).suffix.lower()
-            sniff = CONTENT_EXT_MAGIC.get(ext)
-            if sniff is None:
+        infos = [i for i in z.infolist() if not i.is_dir()]
+        # Every file path in the release zip (not only the content-typed
+        # ones): what a `.gltf`'s plain relative buffer/image uri may name.
+        present = {i.filename for i in infos}
+        budget = 0
+        for info in infos:
+            name = info.filename
+            if pathlib.PurePosixPath(name).name == MANIFEST_NAME:
                 continue
             try:
                 with z.open(info) as f:
-                    prefix = f.read(32)
+                    head = f.read(64)
             except OSError:
                 continue
-            if not sniff(prefix):
+            # the release's glTF JSON, from headers before anything is parsed
+            # (the content catalogue's 32 MiB per archive, B1)
+            budget += CG.gltf_json_bytes(name, head[:16], info.file_size)
+            raw = None
+            sniff = CONTENT_EXT_MAGIC.get(pathlib.PurePosixPath(name).suffix.lower())
+            if sniff is not None and sniff(head[:32]):
+                if info.file_size > CONTENT_ENTRY_CAP:
+                    return {"ok": False, "error": f"{name} is {info.file_size} bytes, over {CONTENT_ENTRY_CAP}"}
+                raw = _read_whole(z, info, CONTENT_ENTRY_CAP)
+                if raw is None:
+                    return {"ok": False, "error": f"{name} inflates past {CONTENT_ENTRY_CAP} bytes"}
+                content_files.append(name)
+                parts_by_path[name] = {"sha256": hashlib.sha256(raw).hexdigest(), "raw": raw, "gate": None}
+            why = name_problem(z, info, head, raw)
+            if why:
+                format_refuse(name, why)
                 continue
-            if info.file_size > CONTENT_ENTRY_CAP:
-                return {"ok": False, "error": f"{info.filename} is {info.file_size} bytes, over {CONTENT_ENTRY_CAP}"}
-            with z.open(info) as f:
-                raw = f.read(CONTENT_ENTRY_CAP + 1)
-            if len(raw) > CONTENT_ENTRY_CAP:
-                return {"ok": False, "error": f"{info.filename} inflates past {CONTENT_ENTRY_CAP} bytes"}
-            content_files.append(info.filename)
-            parts_by_path[info.filename] = {"sha256": hashlib.sha256(raw).hexdigest(), "raw": raw, "gate": None}
+            # every GLB and every .gltf, declared or not, of any class (§2.7.3)
+            if head[:4] == b"glTF" or name.lower().endswith(".gltf"):
+                if raw is None and info.file_size > CG.MAX_GLTF_JSON:
+                    format_refuse(name, f"a .gltf of {info.file_size} bytes, over {CG.MAX_GLTF_JSON}")
+                    continue
+                data = raw if raw is not None else _read_whole(z, info, CG.MAX_GLTF_JSON)
+                why = gltf_format_problem(data, name, present) if data is not None else "unreadable"
+                if why:
+                    format_refuse(name, why)
+        if budget > CG.MAX_GLTF_JSON_TOTAL:
+            format_refuse("", f"{budget} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
 
         # The VRM gate's selection rule (AstraPlugins 516ba38's part_licence):
-        # judged by the file's own bytes, never by a `.vrm` name. A `.astrachar`
-        # bundle's body is gated unconditionally (its own branch, below, via
-        # vrm_gate -- which runs the format check itself); every other
-        # content-typed file is classified by its glTF extensions when it
-        # parses as one at all -- an avatar (VRM, VRMC_vrm) in ANY part, an
-        # animation (VRMC_vrm_animation, no avatar extension) NEVER, and a
-        # plain glTF/GLB only when its declared part's kind is "character".
-        # AstraPlugins 4976d60: BEFORE any of that, every GLB (by magic) and
-        # every `.gltf`, in any part and of any class, is held to
-        # gltf_format_problem -- a duplicate JSON member, a chunk declared
-        # past EOF, or an external uri must never fall through to a lenient
-        # parse that calls the file "plain" (and so, in an animations part,
-        # never judges it at all).
+        # judged by the file's own bytes, never by a `.vrm` name -- an avatar
+        # (VRM, VRMC_vrm) in ANY part, an animation (VRMC_vrm_animation, no
+        # avatar extension) NEVER, and a plain glTF/GLB only when its
+        # declared part's kind is "character". A part refused for its format
+        # above is not judged again; a `.astrachar`/`.astrapack` is judged
+        # whole by the content contract's own ingest_bundle (AstraPlugins
+        # #129), its body's readable VRM licence becoming the part's licence.
         for entry in declared:
             path = entry.get("path") if isinstance(entry, dict) else None
-            if not isinstance(path, str) or path not in parts_by_path:
-                continue
-            if pathlib.PurePosixPath(path).suffix.lower() == ".astrachar":
-                gate, gap = read_astrachar_body_vrm(z, path)
-                if gap:
-                    gaps.append({"path": path, "reason": gap})
-                parts_by_path[path]["gate"] = gate
+            if not isinstance(path, str) or path not in parts_by_path or path in format_paths:
                 continue
             raw = parts_by_path[path]["raw"]
-            is_glb = raw[:4] == b"glTF"
-            is_gltf_file = path.lower().endswith(".gltf")
-            if is_glb or is_gltf_file:
-                problem = gltf_format_problem(raw, path, present)
-                if problem is not None:
-                    parts_by_path[path]["gate"] = {
-                        "status": "format", "vrm_licence": None,
-                        "refusal": {"field": "format", "detail": problem},
-                    }
-                    continue
+            if path.lower().endswith(BUNDLE_EXTS) and _is_zip(raw[:4]):
+                bv = bundle_verdict(path, raw, entry.get("licence"))
+                gate = {"status": bv["status"], "vrm_licence": None, "refusal": bv["refusal"]}
+                if bv["status"] == "ok" and bv["body"] is not None:
+                    body_gate = vrm_gate(bv["body"][1], bv["body"][0])
+                    if body_gate["status"] == "ok":
+                        gate["vrm_licence"] = body_gate["vrm_licence"]
+                parts_by_path[path]["gate"] = gate
+                continue
             doc = gltf_document(raw, path)
             if doc is not None:
                 cls = gltf_class(doc)
@@ -1028,7 +1206,9 @@ def content_report(zip_path, declared):
     declared_set = set(declared_paths)
     content_set = set(content_files)
     undeclared = sorted(content_set - declared_set)
-    missing = sorted(declared_set - content_set)
+    # a declared file refused for what it is (a .gltf with a BOM is not
+    # content-typed) is there: it is not also "missing"
+    missing = sorted(declared_set - content_set - format_paths)
     duplicates = sorted(dup)
 
     declared_by_path = {e["path"]: e for e in declared if isinstance(e, dict) and isinstance(e.get("path"), str)}
@@ -1037,8 +1217,10 @@ def content_report(zip_path, declared):
     licence_conflicts = []
     licence_unknown = []
     licence_undeclared = []
-    format_refusals = []
+    bundle_refusals = []
     for path in sorted(declared_set & content_set):
+        if path in format_paths:
+            continue  # E_CONTENT_FORMAT, refused before licence_source is even asked
         info = parts_by_path[path]
         gate = info["gate"]
         gate_status = gate["status"] if gate else None
@@ -1047,9 +1229,11 @@ def content_report(zip_path, declared):
             licence_conflicts.append({"path": path, "field": gate["refusal"]["field"], "detail": gate["refusal"]["detail"]})
             continue
         if gate_status == "format":
-            # AstraPlugins 4976d60: E_CONTENT_FORMAT, refused before
-            # licence_source is even asked -- same shape as a conflict.
             format_refusals.append({"path": path, "detail": gate["refusal"]["detail"]})
+            continue
+        if gate_status == "bundle":
+            # an embedded bundle the content contract refuses, with its own code
+            bundle_refusals.append({"path": path, "code": gate["refusal"]["code"], "detail": gate["refusal"]["detail"]})
             continue
         vrm_licence = gate["vrm_licence"] if gate and gate_status != "unknown" else None
         if gate_status == "refused":
@@ -1080,7 +1264,7 @@ def content_report(zip_path, declared):
         "licence_unknown": licence_unknown,
         "licence_undeclared": licence_undeclared,
         "format_refusals": format_refusals,
-        "gaps": gaps,
+        "bundle_refusals": bundle_refusals,
     }
 
 

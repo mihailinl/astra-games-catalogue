@@ -13,8 +13,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
+import { execFileSync } from "node:child_process";
+
 import { CODES } from "../lib/codes.mjs";
 import { checkContent } from "../lib/content.mjs";
+import { readTomlFile } from "../lib/schemas.mjs";
+import { stripHeader, VENDOR } from "../lib/vendored.mjs";
 import { ROOT, makeGlb, makeZipBytes, tmpdir } from "./helpers.mjs";
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
@@ -245,31 +249,6 @@ test("a VRM part's readable licence_source is 'vrm' regardless of a declared lic
 
 // ── .astrachar: the nested body is gated the same as a bare .vrm ────────
 
-test(".astrachar: a readable bundle's body is gated the same as a bare .vrm", () => {
-  const inner = makeZipBytes({
-    "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
-    "models/Mira.vrm": ONLY_AUTHOR_VRM0,
-  });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner });
-  const r = checkContent({ zipPath, manifest });
-  const f = r.findings.find((f2) => f2.code === CODES.E_CONTENT_LICENCE_REFUSED);
-  assert.ok(f, JSON.stringify(r.findings));
-  assert.equal(f.path, "character/Mira.astrachar");
-  assert.equal(f.field, "extensions.VRM.meta.allowedUserName");
-});
-
-test(".astrachar: an unreadable body is a gap (F_CONTENT_ASTRACHAR_UNREADABLE), never a refusal", () => {
-  const inner = makeZipBytes({ "astrachar.json": JSON.stringify({ format: "astra.character", body: { ref: "builtin:nayu" } }) });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner });
-  const r = checkContent({ zipPath, manifest });
-  assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_REFUSED));
-  assert.ok(codesOf(r).includes(CODES.F_CONTENT_ASTRACHAR_UNREADABLE), JSON.stringify(r.findings));
-  assert.equal(r.content.length, 1, "a gap still lists the part -- it just has no vrm_licence, and falls back to the declared licence");
-  assert.equal(r.content[0].licence_source, "declared");
-});
-
 test("a fully covered, all-allowed release has no findings and lists every part", () => {
   const manifest = {
     integration: {
@@ -335,16 +314,6 @@ test("both metas allow redistribution: a disagreeing usage flag is NOT a conflic
   const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": both("Allow", false) }), manifest });
   assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_CONFLICT), JSON.stringify(r.findings));
   assert.equal(r.content[0].vrm_licence.vrm_version, "1.0");
-});
-
-test(".astrachar: a body carrying disagreeing metas is a conflict too", () => {
-  const inner = makeZipBytes({
-    "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
-    "models/Mira.vrm": DISAGREE,
-  });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner }), manifest });
-  assert.equal(r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_CONFLICT)?.path, "character/Mira.astrachar", JSON.stringify(r.findings));
 });
 
 // ── O-2b/O-2c and the extension-based selection rule (AstraPlugins 516ba38) ─
@@ -456,4 +425,158 @@ test("a .gltf naming a sibling .bin the release holds has no format finding", ()
   assert.ok(!codesOf(r).includes(CODES.E_CONTENT_FORMAT), JSON.stringify(r.findings));
   assert.equal(r.content.length, 1);
   assert.equal(r.content[0].path, "models/prop.gltf");
+});
+
+// ── AstraPlugins #129: every games content release golden, through THIS reading ──
+// The vendored testdata/games/content/releases/ goldens (and gen.py's synth()
+// for the ones too large to commit) are zipped as a release and run through
+// checkContent; each must get exactly the verdict, code, detail and flag its
+// vectors.json entry states -- the same entries AstraPlugins'
+// check-games-goldens.py holds itself to over the loose directories.
+
+const AP = path.join(VENDOR, "astraplugins");
+const VECTORS = JSON.parse(fs.readFileSync(path.join(AP, "testdata/games/vectors.json"), "utf8"));
+const RELEASES = Object.fromEntries(VECTORS.content.releases.map((v) => [v.name, v]));
+
+function walk(dir, base = dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const p = path.join(dir, d.name);
+    return d.isDirectory() ? walk(p, base) : [path.relative(base, p).split(path.sep).join("/")];
+  });
+}
+
+function synth(name) {
+  const gen = path.join(AP, "testdata/games/content/vrm/gen.py");
+  const script = [
+    "import importlib.util, sys",
+    `spec = importlib.util.spec_from_file_location("gen", ${JSON.stringify(gen)})`,
+    "gen = importlib.util.module_from_spec(spec); spec.loader.exec_module(gen)",
+    `sys.stdout.buffer.write(gen.synth(${JSON.stringify(name)}))`,
+  ].join("\n");
+  return execFileSync("python3", ["-c", script], { maxBuffer: 64 * 1024 * 1024 });
+}
+
+/** A release golden as upstream holds it: its files (vendored headers stripped), synthesised ones added. */
+function releaseGolden(name) {
+  const v = RELEASES[name];
+  const dir = path.join(AP, "testdata/games", v.dir);
+  const files = {};
+  for (const rel of walk(dir)) {
+    const upstreamPath = `testdata/games/${v.dir}/${rel}`;
+    files[rel] = stripHeader("astraplugins", upstreamPath, fs.readFileSync(path.join(dir, rel)));
+  }
+  for (const [rel, s] of Object.entries(v.synth ?? {})) files[rel] = synth(s);
+  const toml = readTomlFile(path.join(dir, "astra-gi.toml"));
+  assert.ok(toml.ok, toml.error);
+  return { v, files, manifest: toml.manifest };
+}
+
+function runGolden(files, manifest) {
+  const dir = tmpdir("agc-golden-");
+  try {
+    const zipPath = path.join(dir, "release.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    return checkContent({ zipPath, manifest });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const refusalsOf = (r) => [...new Set(r.findings.filter((f) => f.code.startsWith("E_")).map((f) => f.code))].sort();
+const flagsOf = (r) => [...new Set(r.findings.filter((f) => f.code.startsWith("F_")).map((f) => f.code))].sort();
+
+for (const name of Object.keys(RELEASES)) {
+  test(`games content golden ${name}: ${RELEASES[name].verdict}${RELEASES[name].code ? ` ${RELEASES[name].code}` : ""}, as AstraPlugins' vectors.json says`, () => {
+    const { v, files, manifest } = releaseGolden(name);
+    const r = runGolden(files, manifest);
+    assert.deepEqual(refusalsOf(r), v.verdict === "refuse" ? [v.code] : [], JSON.stringify(r.findings));
+    if (v.detail) assert.ok(r.findings.some((f) => f.message.includes(v.detail)), `no finding names "${v.detail}": ${JSON.stringify(r.findings)}`);
+    assert.deepEqual(flagsOf(r), [...(v.flags ?? [])].sort(), JSON.stringify(r.findings));
+  });
+}
+
+test("#129 rule 1: a GLB renamed .bin is refused, and named .vrm it is content (undeclared)", () => {
+  const { files, manifest } = releaseGolden("glb-named-bin");
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  files["data/avatar.vrm"] = files["data/avatar.bin"];
+  delete files["data/avatar.bin"];
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_UNDECLARED]);
+});
+
+test("#129 rule 1: a UTF-16 localisation file passes, the same encoding of a glTF does not", () => {
+  const ok = releaseGolden("localisation-utf16");
+  assert.deepEqual(refusalsOf(runGolden(ok.files, ok.manifest)), []);
+  const bad = releaseGolden("gltf-named-json-utf16");
+  assert.deepEqual(refusalsOf(runGolden(bad.files, bad.manifest)), [CODES.E_CONTENT_FORMAT]);
+});
+
+test("#129 rule 2: a .gltf uri with %2f is refused even beside a file of that literal name", () => {
+  const { files, manifest } = releaseGolden("gltf-uri-percent");
+  assert.ok(Object.keys(files).some((f) => f.includes("%2f")), "the literal file is in the release");
+  const r = runGolden(files, manifest);
+  assert.ok(r.findings.some((f) => f.code === CODES.E_CONTENT_FORMAT && f.message.includes("'%'")), JSON.stringify(r.findings));
+});
+
+test("#129 rule 3: two 11 MiB GLBs fit the release's 32 MiB of glTF JSON, three do not", () => {
+  const { files, manifest } = releaseGolden("gltf-total-over-32mib");
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  delete files["models/c.glb"];
+  const two = { ...manifest, integration: { ...manifest.integration, content: manifest.integration.content.filter((e) => e.path !== "models/c.glb") } };
+  assert.deepEqual(refusalsOf(runGolden(files, two)), []);
+});
+
+test("#129 rule 3: a .gltf a million levels deep is refused, never a crash of the gate", () => {
+  const { files, manifest } = releaseGolden("gltf-million-deep");
+  const r = runGolden(files, manifest);
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], JSON.stringify(r.findings));
+});
+
+test("#129 rule 4: an embedded bundle's refusal keeps the content contract's code and names <gi path>!<inner path>", () => {
+  const { files, manifest } = releaseGolden("bundle-glb-prohibited-beside-allowed-body");
+  const r = runGolden(files, manifest);
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_REFUSED);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.equal(f.detail, "characters/scout.astrachar!characters/aiko/accessories/hat/hat.glb");
+  assert.equal(r.content.length, 0, "a refused part is never listed");
+});
+
+/** A Stored zip of regular files, in the order given (a bundle's astrachar.json last). */
+function bundleZip(files) {
+  const payload = Object.entries(files).map(([n, d]) => [n, Buffer.from(d).toString("base64")]);
+  const script = [
+    "import sys, json, zipfile, io, base64",
+    "buf = io.BytesIO()",
+    "with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as z:",
+    "    for name, data in json.load(sys.stdin):",
+    "        zi = zipfile.ZipInfo(name, date_time=(2026, 10, 31, 0, 0, 0))",
+    "        zi.external_attr = 0o100644 << 16",
+    "        z.writestr(zi, base64.b64decode(data))",
+    "sys.stdout.buffer.write(buf.getvalue())",
+  ].join("\n");
+  return execFileSync("python3", ["-c", script], { input: JSON.stringify(payload) });
+}
+
+test("#129 rule 4: a bundle the content contract cannot read is refused with its code, no longer a gap", () => {
+  const inner = bundleZip({ "astrachar.json": JSON.stringify({ format: "astra.character", body: { ref: "builtin:nayu" } }) });
+  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
+  const r = runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": inner }, manifest);
+  assert.deepEqual(refusalsOf(r), [CODES.E_BUNDLE_MANIFEST], JSON.stringify(r.findings));
+  const lenient = makeZipBytes({ "astrachar.json": "{}" });
+  assert.deepEqual(refusalsOf(runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": lenient }, manifest)), [CODES.E_ARCHIVE_LINK],
+    "zipfile's default mode has no file-type bits: content's step 3 reads it as not a regular file");
+  const shape = bundleZip({ "astrachar.json": "[]" });
+  const r2 = runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": shape }, manifest);
+  assert.deepEqual(refusalsOf(r2), [CODES.E_CONTENT_FORMAT], "content's reader raises on an array manifest; this refuses");
+});
+
+test("#129 rule 4: a valid bundle's body licence is the part's licence, and an Unknown inside is flagged", () => {
+  const aiko = releaseGolden("bundle-model-aiko");
+  const r = runGolden(aiko.files, aiko.manifest);
+  assert.deepEqual(refusalsOf(r), []);
+  assert.equal(r.content[0].licence_source, "vrm");
+  assert.ok(r.content[0].vrm_licence, "the body's VRM licence is shown");
+  const other = releaseGolden("bundle-vrm0-licence-other");
+  other.manifest.integration.content[0].licence = "";
+  assert.deepEqual(refusalsOf(runGolden(other.files, other.manifest)), [CODES.E_CONTENT_LICENCE_UNDECLARED],
+    "an Unknown inside passes only with the declared licence");
 });
