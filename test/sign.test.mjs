@@ -177,3 +177,21 @@ test("bin/keygen.mjs writes a 0600 seed, refuses to overwrite, and prints only t
   assert.equal(signer.public_key, row.public_key);
   assert.throws(() => execFileSync(process.execPath, [keygen, ...argv], { stdio: "pipe" }));
 });
+
+test("rights gate, sign side: a candidate whose findings hold a wait, or whose parts carry no content_confirmed, is never listed", () => {
+  const c = makeCatalogue();
+  const part = { path: "art/cover.png", kind: "art", title: "Cover", credit: "author", licence: "CC0-1.0", licence_source: "declared", sha256: "e".repeat(64) };
+  const forged = candidate();
+  forged.findings = [{ code: "W_CONTENT_UNCONFIRMED", message: "1 content part(s) wait" }]; // verdict still says accept
+  const unconfirmed = candidate();
+  unconfirmed.entry.content = [part];
+  const confirmed = candidate();
+  confirmed.entry.content = [part];
+  confirmed.entry.content_confirmed = { "rights-art": 2 };
+  const r = c.sign({ candidates: [forged, unconfirmed, confirmed] });
+  assert.deepEqual(r.accepted.map((a) => a.result), ["refused", "refused", "listed"], JSON.stringify(r.accepted));
+  assert.match(r.accepted[0].reason, /W_CONTENT_UNCONFIRMED/);
+  assert.match(r.accepted[1].reason, /content_confirmed/);
+  const listed = c.dist("games-index.json").signed.entries.find((e) => e.id === confirmed.entry.id);
+  assert.deepEqual(listed.content_confirmed, { "rights-art": 2 });
+});

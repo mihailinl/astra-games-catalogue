@@ -13,7 +13,7 @@ import { test } from "node:test";
 
 import { act, makeCatalogue, T0 } from "./catalogue.mjs";
 import { INDEX_SCHEMA, verifyDocuments, WITHDRAWN_SCHEMA } from "../lib/documents.mjs";
-import { ingestRelease } from "../lib/ingest.mjs";
+import { bindingTokenSha256, ingestRelease } from "../lib/ingest.mjs";
 import { descriptorDigest } from "../lib/model.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { emptyModeration } from "../lib/state.mjs";
@@ -26,7 +26,7 @@ const state0 = () => ({ entries: [], bindings: {}, engineCodes: {}, moderation: 
 async function ingest({ zip, repo, tag, manifestId, version, descriptorSha = null, certificate = {} }) {
   const release = { ...fixture("release.json"), tag_name: tag };
   return ingestRelease({
-    request: { repo_id: repo.id, tag, account: "astra-staging-author", binding_token: "stagingBindingToken_0123456789abcdef" },
+    request: { lease_id: `lease-${repo.id}`, repo_id: repo.id, tag, binding_token_sha256: bindingTokenSha256("stagingBindingToken_0123456789abcdef"), confirmed: [] },
     policy: { firstParty, loadersFile: path.join(ROOT, "loaders.json") },
     state: state0(),
     reserved,
