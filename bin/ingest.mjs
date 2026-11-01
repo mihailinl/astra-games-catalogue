@@ -9,7 +9,7 @@
 // writes the unsigned candidate. It holds no secret: GITHUB_TOKEN is the job's
 // read-only token, used for GitHub's API rate limit only.
 //
-//   node bin/ingest.mjs --data <data-branch checkout> --request <games-request-<lease>.json> --out <candidate.json>
+//   node bin/ingest.mjs --data <data-branch checkout> --request <games-request-<lease>.json> --out <candidate.json> [--lease <id>]
 //
 // Exit 0 whatever the verdict (the verdict is data for the report job and
 // sign.yml); non-zero only when the run itself broke.
@@ -41,6 +41,8 @@ async function main() {
   const requestFile = opt("--request");
   if (!data || !outFile || !requestFile) throw new Error("usage: bin/ingest.mjs --data <dir> --request <games-request-<lease>.json> --out <candidate.json>");
   const request = readRequest(JSON.parse(fs.readFileSync(requestFile, "utf8")));
+  // the matrix names the lease; the file must be that lease's
+  if (opt("--lease") && request.lease_id !== opt("--lease")) throw new Error(`${requestFile} is lease ${request.lease_id}, not ${opt("--lease")}`);
 
   const policy = loadPolicy(ROOT);
   const state = loadState(data);

@@ -83,16 +83,29 @@ test("the four A§5.1 workflows exist, plus ci", () => {
   assert.deepEqual(files.sort(), ["ci.yml", "ingest.yml", "promote.yml", "resign.yml", "sign.yml"]);
 });
 
-test("the ingest job holds no signing secret, no secret at all, and cannot write", () => {
+test("ingest.yml holds no secret at all and cannot write; the ingest job enters no environment and can only read", () => {
   const t = read("ingest.yml");
   const body = t.split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
   assert.doesNotMatch(body, /secrets\./, "ingest.yml references a secret");
-  assert.doesNotMatch(body, /environment:/, "ingest.yml enters an environment");
   for (const s of SIGNING) assert.ok(!body.includes(s), `ingest.yml names ${s}`);
-  assert.doesNotMatch(body, /git push|contents:\s*write|:\s*write\b/, "ingest.yml can write");
-  for (const [name, lines] of Object.entries(jobs(t))) {
-    assert.deepEqual(jobPermissions(lines), { contents: "read" }, `ingest job ${name}`);
-  }
+  assert.doesNotMatch(body, /git push|contents:\s*write|actions:\s*write|packages:\s*write/, "ingest.yml can write");
+  const ingest = jobs(t).ingest;
+  assert.ok(ingest, "ingest.yml has an ingest job");
+  assert.ok(!ingest.some((l) => /^\s+environment:/.test(code(l))), "the ingest job enters an environment");
+  assert.deepEqual(jobPermissions(ingest), { contents: "read" }, "the ingest job's permissions");
+  assert.ok(!ingest.some((l) => /id-token/.test(code(l))), "the ingest job can mint an OIDC token");
+});
+
+test("ingest.yml takes no inputs: the waker sends {ref: main} only (INV-33); the work comes from the lease files", () => {
+  const t = read("ingest.yml");
+  const on = t.slice(t.indexOf("\non:\n"), t.indexOf("\npermissions:"));
+  assert.match(on, /\n {2}workflow_dispatch:\s*\n/, "workflow_dispatch, with nothing under it");
+  assert.doesNotMatch(on, /inputs:/);
+  assert.match(on, /\n {2}schedule:\n/, "a schedule fallback when the waker is down");
+  assert.doesNotMatch(t, /github\.event\.(inputs|client_payload)|inputs\./, "nothing reads an event payload");
+  const ingest = jobs(t).ingest.join("\n");
+  assert.match(ingest, /--request "\$RUNNER_TEMP\/requests\/games-request-\$LEASE\.json"/);
+  assert.match(ingest, /name: games-candidate-\$\{\{ matrix\.lease \}\}/);
 });
 
 test("the signing secrets are named only in sign.yml and resign.yml, inside the publish-games job", () => {
@@ -133,7 +146,7 @@ test("every action is pinned to the peeled commit recorded in action-pins.json",
 
 test("permissions are deny-by-default at the top and minimal per job", () => {
   const allowed = {
-    "ingest.yml": { ingest: { contents: "read" } },
+    "ingest.yml": { work: { contents: "read", "id-token": "write" }, ingest: { contents: "read" }, report: { contents: "read", "id-token": "write" } },
     "sign.yml": { sign: { contents: "write", actions: "read" }, notify: { "id-token": "write" } },
     "resign.yml": { resign: { contents: "write" } },
     "promote.yml": { promote: { contents: "read" } },
