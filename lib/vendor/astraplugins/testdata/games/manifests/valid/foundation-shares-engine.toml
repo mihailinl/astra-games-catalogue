@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at d46e44a089387589018f28cfc3403399f7c3b89d, path testdata/games/manifests/valid/foundation-shares-engine.toml.
+# VENDORED from mihailinl/AstraPlugins at ac3f13b1f5992c997c0de40374e07a3996551448, path testdata/games/manifests/valid/foundation-shares-engine.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Valid: a SECOND foundation for an engine code it does not own. It ships

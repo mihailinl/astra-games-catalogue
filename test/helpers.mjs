@@ -37,6 +37,47 @@ export function makeZip(files) {
   return execFileSync("python3", ["-c", script], { input: JSON.stringify(files) });
 }
 
+/**
+ * A deterministic zip whose entries may be binary (base64-round-tripped
+ * through the same Python zipfile core as `makeZip`, which only takes text).
+ * @param {Record<string, Buffer|string>} files
+ */
+export function makeZipBytes(files) {
+  const payload = {};
+  for (const [name, data] of Object.entries(files)) {
+    payload[name] = (Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8")).toString("base64");
+  }
+  const script = [
+    "import sys, json, zipfile, io, base64",
+    "files = json.load(sys.stdin)",
+    "buf = io.BytesIO()",
+    "with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:",
+    "    for name in sorted(files):",
+    "        zi = zipfile.ZipInfo(name, date_time=(2026, 10, 31, 0, 0, 0))",
+    "        zi.compress_type = zipfile.ZIP_DEFLATED",
+    "        z.writestr(zi, base64.b64decode(files[name]))",
+    "sys.stdout.buffer.write(buf.getvalue())",
+  ].join("\n");
+  return execFileSync("python3", ["-c", script], { input: JSON.stringify(payload) });
+}
+
+/** A minimal GLB: the 12-byte header plus one JSON-typed chunk, no BIN chunk. */
+export function makeGlb(obj) {
+  const bodyText = Buffer.from(JSON.stringify(obj), "utf8");
+  const pad = (4 - (bodyText.length % 4)) % 4;
+  const body = Buffer.concat([bodyText, Buffer.alloc(pad, 0x20)]);
+  const chunk0 = Buffer.concat([
+    Buffer.from(new Uint32Array([body.length]).buffer),
+    Buffer.from("JSON", "ascii"),
+    body,
+  ]);
+  const header = Buffer.concat([
+    Buffer.from("glTF", "ascii"),
+    Buffer.from(new Uint32Array([2, 12 + chunk0.length]).buffer),
+  ]);
+  return Buffer.concat([header, chunk0]);
+}
+
 export const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
 
 /**

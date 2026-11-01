@@ -1,0 +1,25 @@
+# VENDORED from mihailinl/AstraPlugins at ac3f13b1f5992c997c0de40374e07a3996551448, path testdata/games/manifests/invalid/content-path-traversal.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# Invalid (schema): a [[integration.content]] path must be relative with no
+# ".." segment and no ":" (so a "builtin:" reference can never read as a
+# part) -- manifest.md §2.7.
+schema = 1
+
+[integration]
+id = "someone.path-traversal"
+name = "Path Traversal Example"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "../../outside.png"
+kind = "art"
+title = "Escaped art"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

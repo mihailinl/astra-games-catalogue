@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at d46e44a089387589018f28cfc3403399f7c3b89d, path spec/games/reserved.yaml.
+# VENDORED from mihailinl/AstraPlugins at ac3f13b1f5992c997c0de40374e07a3996551448, path spec/games/reserved.yaml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Game-integration reserved names and ids — the ONE list.
@@ -43,6 +43,21 @@
 #                        the launcher checks the first three today
 #                        (astra-game-launcher main, src/paths.rs:87-91); the
 #                        other two land with the 0.5.0 Link file writer.
+#
+#   integration_reserved_keys   An `[integration.*]` table key schema 1 does
+#                        not define yet, but will mean something specific
+#                        once it does: shipping it today, with any shape,
+#                        would let an early author's manifest collide with
+#                        the real thing later. `uses` is the first
+#                        (manifest.md §2.8): a future `[[integration.uses]]`
+#                        reference to an in-app catalogue item (character,
+#                        animset) by id, instead of embedded bytes
+#                        (dev/game-integrations-plan-merged.md §5.4
+#                        amendment, 2026-11-01). `manifest.schema.json`
+#                        refuses the key outright (`"uses": false`); this
+#                        row is the single place that says why, so a future
+#                        schema-2 author knows to look here before reusing
+#                        the name for something else.
 #
 # HOW TO CHANGE ANY OF IT
 #   Edit this file, then `src/paths.rs::is_reserved` and the engine-code
@@ -98,3 +113,9 @@ profile_file_names:
   - astra-launcher-backup        # mirrors: src/paths.rs BACKUP_DIR
   - astra-link.json              # new in 0.5.0: the Link token file (B§3.1)
   - play-arm.json                # new in 0.5.0: written beside astra-link.json (B§3.1)
+
+# mirrors: manifest.md §2.8. Not consumed by any loader today (the schema's
+# own "uses": false already refuses the key); this is the registry entry so
+# the reservation is recorded in the ONE list, not only in the schema.
+integration_reserved_keys:
+  - uses

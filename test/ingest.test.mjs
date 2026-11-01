@@ -16,7 +16,7 @@ import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { emptyModeration } from "../lib/state.mjs";
-import { ROOT, fakeGh, fakeGithub, fakeSteam, fixture, fixtureText, makeZip, sha256, stubProbe, tmpdir } from "./helpers.mjs";
+import { ROOT, fakeGh, fakeGithub, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, sha256, stubProbe, tmpdir } from "./helpers.mjs";
 
 const reserved = loadReserved();
 const firstParty = JSON.parse(fs.readFileSync(path.join(ROOT, "first-party.json"), "utf8"));
@@ -201,6 +201,56 @@ test("the version must be the tag's", async () => {
   const m = fixtureText("astra-gi.toml").replace('version = "1.0.0"', 'version = "1.0.1"');
   const c = await run({ zip: stagingZip(m), version: "1.0.1" });
   assert.ok(codes(c).includes("E_VERSION_TAG_MISMATCH"));
+});
+
+// ── content parts (manifest.md §2.7, merged plan §5.4) ──────────────────
+
+const CONTENT_PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
+
+function withCoverArt() {
+  return fixtureText("astra-gi.toml") + `
+[[integration.content]]
+path = "art/cover.png"
+kind = "art"
+title = "Cover art"
+credit = "astra-staging-author"
+licence = "CC0-1.0"
+`;
+}
+
+test("a release with its content part present and declared carries content[] end to end", async () => {
+  const zip = makeZipBytes({
+    "astra-gi.toml": withCoverArt(),
+    "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
+    "art/cover.png": CONTENT_PNG,
+  });
+  const c = await run({ zip });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(c.entry.content.length, 1);
+  assert.equal(c.entry.content[0].path, "art/cover.png");
+  assert.equal(c.entry.content[0].kind, "art");
+  assert.equal(c.entry.content[0].sha256.length, 64);
+});
+
+test("content: an undeclared file refuses the whole release (E_CONTENT_UNDECLARED)", async () => {
+  const zip = makeZipBytes({
+    "astra-gi.toml": fixtureText("astra-gi.toml"), // no [[integration.content]] at all
+    "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
+    "art/cover.png": CONTENT_PNG,
+  });
+  const c = await run({ zip });
+  assert.equal(c.verdict, "refuse");
+  assert.ok(codes(c).includes("E_CONTENT_UNDECLARED"), JSON.stringify(c.findings));
+});
+
+test("content: a declared path with no file refuses the whole release (E_CONTENT_MISSING)", async () => {
+  const zip = makeZipBytes({
+    "astra-gi.toml": withCoverArt(), // declares art/cover.png; the zip has no such file
+    "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
+  });
+  const c = await run({ zip });
+  assert.equal(c.verdict, "refuse");
+  assert.ok(codes(c).includes("E_CONTENT_MISSING"), JSON.stringify(c.findings));
 });
 
 // ── engine codes (merged §2.1) ──────────────────────────────────────────
