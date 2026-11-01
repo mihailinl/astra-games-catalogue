@@ -197,6 +197,19 @@ test("M_RELEASE_HOLD accepts a changed hand: the listing is rebound to the repos
   assert.equal(c.state("bindings.json")[String(HELD.repo_id)].repo_owner_id, 800000099);
 });
 
+test("M_RELEASE_HOLD accepts a changed binding: the listing moves to the account the repository now names", () => {
+  const c = makeCatalogue();
+  const first = candidate({ slug: "rebound", repo_id: 920000006, account: "author" });
+  c.sign({ candidates: [first] });
+  const moved = candidate({ slug: "rebound", repo_id: 920000006, account: "author", version: "1.1.0", verdict: "hold", findings: [{ code: "R_BINDING_CHANGED", message: "rebound" }] });
+  moved.meta.claimant = { account: "new-owner", binding_token: "newOwnersToken_0123456789" };
+  c.sign({ candidates: [moved] });
+  c.sign({ acts: [act("M_RELEASE_HOLD", { hold_id: "920000006@v1.1.0", decision: "accept" })] });
+  const e = c.dist("games-index.json").signed.entries.find((x) => x.id === "author/rebound" && x.version === "1.1.0");
+  assert.equal(e.publisher.account, "new-owner");
+  assert.equal(c.state("bindings.json")["920000006"].binding_token, "newOwnersToken_0123456789");
+});
+
 test("M_MARK_SOURCE_REVIEWED labels only the bytes that were read", () => {
   const c = seeded();
   c.sign({ acts: [ACTS.M_MARK_SOURCE_REVIEWED()] });
