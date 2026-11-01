@@ -29,13 +29,18 @@ catalogue gives you is *where it came from*, not a promise that it is safe.
 **What a listed release has proven:**
 
 - **Community releases** were built by GitHub Actions, on a GitHub-hosted
-  runner, from a pushed tag of the public repository the publisher bound to
-  their Minice account. That is GitHub's own build attestation, checked by
+  runner, from a pushed tag of the public repository the publisher bound on
+  the site. That is GitHub's own build attestation, checked by
   the same certificate code the plugin registry uses
   ([`lib/vendor/astra-registry/`](lib/vendor/astra-registry/), vendored at a
   pinned commit). A hand-started build (`workflow_dispatch`), a branch build,
   a self-hosted runner, a commit that is not the tag's, or a repository whose
   owner changed is refused or held.
+- **The binding** is the `astra-binding:` line the site gave the publisher,
+  committed in `.well-known/astra-gi-owner` at the release's tag. The plugins
+  service keeps only the SHA-256 of its token, and ingest compares that with
+  the line it reads: a tag whose line is not the site's current binding is
+  refused, and a line that changed since the listing is held for a person.
 - **First-party releases** (the repositories in
   [`first-party.json`](first-party.json)) are admitted by **digest pin**
   instead: their Unity foundations compile against files from installed games
@@ -46,15 +51,37 @@ catalogue gives you is *where it came from*, not a promise that it is safe.
   descriptor parser), the schemas in AstraPlugins' `spec/games/`, the engine
   code rules, and the anti-cheat and online-game checks.
 
+- **Every content part** (animations, a character model, art, audio) was
+  confirmed by the author on the site, part by part, under the current
+  rights text. A part is one file, its path and its SHA-256: a changed file
+  is asked about again, and a release waits (`W_CONTENT_UNCONFIRMED`) until
+  every part is confirmed. The entry records which text versions they were
+  confirmed under (`content_confirmed`); who confirmed, and when, stays in
+  the plugins service.
+
 **What it has not proven:** that anybody read the code. A release is listed
 the moment it passes, labelled **«Не проверено модераторами»**. A moderator may
 later mark it source-reviewed; that is a label, never a gate.
+
+**No Minice account appears here.** The publisher of an entry is named by the
+GitHub login that owned the repository when it was first bound; the Minice
+account behind it stays private in the plugins service, and moderators appear
+only as `mod-<n>`.
 
 **No author holds a signing key.** Authors publish ordinary GitHub releases.
 The only keys are the catalogue's two, and they live only in this
 repository's protected `publish-games` environment (one environment per
 content kind, with the plugin registry's `publish` branch policy). The
 ingest job, which reads strangers' releases, holds no secret at all.
+
+**The plugins service cannot write here.** It holds no GitHub credential. Its
+waker can only start `ingest.yml` and `sign.yml` on `main`, with no inputs;
+each workflow's `work` job then asks the service for its work, and its
+`report` job answers. Both run in the `games-service` environment, which
+holds no secret: their only credential is a short-lived GitHub OIDC token
+for the audience `https://api.minice.ai/plugins/v1/games`, and the service
+accepts it only from this repository's workflows on `main` in that
+environment. No workflow takes `repository_dispatch`.
 
 **Which two keys, and who says so.** The games keys are authorised the same
 way as every other signing key Astra trusts: by the `kind_keys` member of the
@@ -109,30 +136,53 @@ abandoned code moves only by a moderator act that cites its evidence.
 | `fixtures/` | the staging fixtures ingest is tested against, and the list-shape recordings (R29) |
 | `lib/`, `bin/` | ingest, signing, acts, promotion; `lib/vendor/` holds the pinned copies |
 | `.github/workflows/` | `ingest.yml` (no secrets), `sign.yml`, `promote.yml`, `resign.yml`, `ci.yml` |
+| `bin/service.mjs`, `lib/service.mjs` | the `work` and `report` jobs' client for the plugins service's games bot doors |
 | branch `data` | the catalogue's state and the signed documents under `dist/`; written only by `sign.yml` and `resign.yml` |
 
 ## How a release becomes a listing
 
-1. The plugins service sends `repository_dispatch` **`games-release`**
-   `{repo_id, tag, account?, binding_token?}` (registration, poll, Check now).
-2. **Ingest** (`ingest.yml`, no secret) checks the release and uploads an
-   unsigned candidate: `accept`, `hold` (a person decides), `wait` (retried)
-   or `refuse`.
-3. **Sign** (`sign.yml`, `publish-games`) re-checks the candidate against the
-   schema and the catalogue's state, lists it, and re-signs both documents to
-   the `data` branch under `dist/`.
-4. **Promote** (`promote.yml`) makes first-party GitHub releases match what
+1. The author binds the repository and presses **Check now** (or names a tag)
+   on the site; the plugins service queues the release and its waker starts
+   `ingest.yml`. A 15-minute schedule starts it too, if the waker is down.
+2. **Lease** (`ingest.yml` `work`, `games-service`): the job leases up to 5
+   releases (`POST bot/games/leases`), polls the repositories the service
+   names for new releases and registers them (`POST bot/games/releases`),
+   and writes one `games-request-<lease>.json` per lease:
+   `{lease_id, repo_id, tag|null, binding_token_sha256, confirmed[]}`. No
+   account, plaintext token or subject is ever in a lease.
+3. **Ingest** (`ingest.yml` `ingest`, one matrix leg per lease, no secret)
+   checks the release and uploads an unsigned candidate as
+   `games-candidate-<lease>`: `accept`, `hold` (a person decides), `wait`
+   (retried; an unconfirmed content part is a wait) or `refuse`.
+4. **Report** (`ingest.yml` `report`, `games-service`): one
+   `astra.games.ingest-result/1` per lease (`POST bot/games/ingest-results`).
+   The site shows the findings and asks the author about each unconfirmed
+   part; once they tick it, the release is leased again.
+5. **Sign** (`sign.yml`, after the Ingest run): `work` pulls the pending
+   moderator acts and health counts (`GET bot/games/work`); `sign`
+   (`publish-games`) re-checks each candidate against the schema and the
+   catalogue's state, lists it, applies the acts, and re-signs both documents
+   to the `data` branch under `dist/`; `report` posts the outcome
+   (`POST bot/games/sign-results`) and wakes the service
+   (`POST games/signed-wake`, no credential). A run with nothing to sign
+   stops after `work`; `resign.yml` re-signs daily regardless.
+6. **Promote** (`promote.yml`) makes first-party GitHub releases match what
    was signed.
+
+The service's base URL is the repository variable `GAMES_SERVICE_URL`
+(default `https://api.minice.ai/plugins/v1`; `GAMES_SERVICE_AUDIENCE`
+overrides the OIDC audience for a staging service).
 
 ## Moderator acts
 
-The site sends one act per `repository_dispatch` **`games-act`**, as
-`client_payload.act`, after the moderator's console 2FA:
+A moderator acts on the site, with one console 2FA per act; the plugins
+service stores the act and its waker starts `sign.yml`, whose `work` job
+pulls every pending act, oldest first:
 
 ```json
 { "schema": "astra.games.act/1", "type": "M_REVOKE", "at": 1798675100,
-  "by": { "account": "a-moderator" },
-  "confirmation": { "kind": "console-2fa", "ref": "<the site's confirmation id>" },
+  "by": { "account": "mod-7" },
+  "confirmation": { "kind": "console-2fa", "ref": "<the service's act id>" },
   "repo_id": 987654321, "versions": "<=1.1.9", "entry_id": "someone/peak-astra",
   "reason_code": "security", "reason_text": "…" }
 ```
@@ -152,12 +202,14 @@ The site sends one act per `repository_dispatch` **`games-act`**, as
 | `M_RELEASE_HOLD` | `hold_id` (`<repo_id>@<tag>`), `decision: accept\|refuse` |
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
-both documents in its own run. A refused act changes nothing and fails the
-run, after the re-sign has landed.
+both documents in its own run. An act is applied once per confirmation ref:
+one the service serves again (its result never arrived) is answered
+"applied, seq N" and not applied twice. A refused act changes nothing and
+fails the run, after the re-sign has landed and been reported.
 
-The plugins service sends health counts as **`games-health`**
-`{health: {entry_id: {rating_avg (hundredths), rating_count,
-open_reports_unanswered, reports_sent, reports_failed}}}`. `health`,
+The work answer also carries the plugins service's health counts,
+`{entry_id: {rating_avg (hundredths), rating_count,
+open_reports_unanswered, reports_sent, reports_failed}}`, or null. `health`,
 `unmaintained`, `successor_entry_id` and `recommended_foundations` are
 computed and kept, and appear in the signed index once AstraPlugins'
 `games-index-v1.schema.json` declares them (lib/documents.mjs).
