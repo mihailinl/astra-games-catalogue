@@ -177,3 +177,35 @@ test("bin/keygen.mjs writes a 0600 seed, refuses to overwrite, and prints only t
   assert.equal(signer.public_key, row.public_key);
   assert.throws(() => execFileSync(process.execPath, [keygen, ...argv], { stdio: "pipe" }));
 });
+
+test("rights gate, sign side: a candidate whose findings hold a wait, or whose parts carry no content_confirmed, is never listed", () => {
+  const c = makeCatalogue();
+  const part = { path: "art/cover.png", kind: "art", title: "Cover", credit: "author", licence: "CC0-1.0", licence_source: "declared", sha256: "e".repeat(64) };
+  const forged = candidate();
+  forged.findings = [{ code: "W_CONTENT_UNCONFIRMED", message: "1 content part(s) wait" }]; // verdict still says accept
+  const unconfirmed = candidate();
+  unconfirmed.entry.content = [part];
+  const confirmed = candidate();
+  confirmed.entry.content = [part];
+  confirmed.entry.content_confirmed = { "market.rights.art": 2 };
+  const r = c.sign({ candidates: [forged, unconfirmed, confirmed] });
+  assert.deepEqual(r.accepted.map((a) => a.result), ["refused", "refused", "listed"], JSON.stringify(r.accepted));
+  assert.match(r.accepted[0].reason, /W_CONTENT_UNCONFIRMED/);
+  assert.match(r.accepted[1].reason, /content_confirmed/);
+  const listed = c.dist("games-index.json").signed.entries.find((e) => e.id === confirmed.entry.id);
+  assert.deepEqual(listed.content_confirmed, { "market.rights.art": 2 });
+});
+
+test("an accepted candidate clears its own stale hold, and only its own", () => {
+  const c = makeCatalogue();
+  const fp = { account: "mihailinl", slug: "astra-peak", repo_id: 1409552680, owner_id: 193032699, first_party: true };
+  const unpinned = candidate({ ...fp, verdict: "hold", findings: [{ code: "H_FIRST_PARTY_UNPINNED", message: "no pin" }] });
+  const other = candidate({ verdict: "hold", findings: [{ code: "R_IDENTITY_CHANGED", message: "moved" }] });
+  c.sign({ candidates: [unpinned, other] });
+  assert.equal(c.state("holds.json").length, 2);
+  // the owner added the pin; the same release is leased and ingested again
+  const pinned = candidate({ ...fp });
+  const r = c.sign({ candidates: [pinned] });
+  assert.equal(r.accepted[0].result, "listed", JSON.stringify(r.accepted));
+  assert.deepEqual(c.state("holds.json").map((h) => h.hold_id), [`${other.request.repo_id}@v1.0.0`], "the listed release's hold is gone; the other stays");
+});

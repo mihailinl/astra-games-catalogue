@@ -82,7 +82,8 @@ export const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex")
 
 /**
  * A fake GitHub for one staging repository.
- * @param {{zip: Buffer, repo?: object, release?: object, ownerFile?: string|null, licence?: boolean, reachable?: boolean, refs?: object}} o
+ * @param {{zip: Buffer, repo?: object, release?: object, latest?: null, ownerFile?: string|null, licence?: boolean, reachable?: boolean, refs?: object}} o
+ *   `latest: null` makes the repository have no latest release (Check now finds nothing)
  */
 export function fakeGithub(o) {
   const repo = o.repo ?? fixture("repo.json");
@@ -99,11 +100,15 @@ export function fakeGithub(o) {
     async repoById(id) {
       calls.push(["repoById", id]);
       if (Number(id) !== repo.id) return { status: "not_found", reason: "HTTP 404" };
-      return { status: "found", repo: { id: repo.id, full_name: repo.full_name, owner_id: repo.owner.id, private: repo.private, default_branch: repo.default_branch } };
+      return { status: "found", repo: { id: repo.id, full_name: repo.full_name, owner_id: repo.owner.id, owner_login: repo.owner.login, private: repo.private, default_branch: repo.default_branch } };
     },
     async releaseByTag(id, tag) {
       calls.push(["releaseByTag", id, tag]);
       return tag === release.tag_name ? { status: "found", release } : { status: "not_found", reason: "HTTP 404" };
+    },
+    async latestRelease(id) {
+      calls.push(["latestRelease", id]);
+      return o.latest === null ? { status: "not_found", reason: "HTTP 404" } : { status: "found", release };
     },
     async tagCommit(id, tag) {
       calls.push(["tagCommit", id, tag]);

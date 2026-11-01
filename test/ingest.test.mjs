@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { ingestRelease } from "../lib/ingest.mjs";
+import { bindingTokenSha256, ingestRelease, parseRequest } from "../lib/ingest.mjs";
 import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
@@ -22,7 +22,8 @@ const reserved = loadReserved();
 const firstParty = JSON.parse(fs.readFileSync(path.join(ROOT, "first-party.json"), "utf8"));
 const loadersFile = path.join(ROOT, "loaders.json");
 const BINDING = { account: "astra-staging-author", repo_id: 900000001, repo_owner_id: 800000001, binding_token: "stagingBindingToken_0123456789abcdef" };
-const REQUEST = { repo_id: 900000001, tag: "v1.0.0", account: "astra-staging-author", binding_token: "stagingBindingToken_0123456789abcdef" };
+const TOKEN = "stagingBindingToken_0123456789abcdef";
+const REQUEST = { lease_id: "lease-1", repo_id: 900000001, tag: "v1.0.0", binding_token_sha256: bindingTokenSha256(TOKEN), confirmed: [] };
 
 function emptyState(extra = {}) {
   return { entries: [], bindings: {}, engineCodes: {}, moderation: emptyModeration(), withdrawn: { rows: [], held: [] }, holds: [], health: {}, floors: {}, ...extra };
@@ -104,20 +105,24 @@ test("A§11 S1b: a transferred repository is held, never listed and never refuse
 
 test("a binding line naming another account is held as R_BINDING_CHANGED", async () => {
   const zip = stagingZip();
+  const other = "anotherAccountsToken_abcdef0123";
   const c = await run({
     zip,
     state: emptyState({ bindings: { 900000001: BINDING } }),
-    github: fakeGithub({ zip, ownerFile: "astra-binding: anotherAccountsToken_abcdef0123\n" }),
+    github: fakeGithub({ zip, ownerFile: `astra-binding: ${other}\n` }),
+    request: { ...REQUEST, binding_token_sha256: bindingTokenSha256(other) },
   });
-  assert.equal(c.verdict, "hold");
+  assert.equal(c.verdict, "hold", JSON.stringify(c.findings));
   assert.ok(codes(c).includes("R_BINDING_CHANGED"));
+  assert.equal(c.meta.claimant.binding_token, other, "a person's M_RELEASE_HOLD rebinds to the line at this tag");
+  assert.equal(c.meta.claimant.account, "astra-staging-author", "the claimant is the repository owner's GitHub login");
 });
 
-test("an unbound repository is refused, and a first release needs the site's account", async () => {
+test("an unbound repository is refused, and a first release needs the site's binding", async () => {
   const zip = stagingZip();
   const a = await run({ zip, github: fakeGithub({ zip, ownerFile: null }) });
   assert.ok(codes(a).includes("E_UNBOUND"));
-  const b = await run({ zip, request: { repo_id: 900000001, tag: "v1.0.0" } });
+  const b = await run({ zip, request: { lease_id: "lease-1", repo_id: 900000001, tag: "v1.0.0" } });
   assert.ok(codes(b).includes("E_UNBOUND"));
 });
 
@@ -224,7 +229,7 @@ test("a release with its content part present and declared carries content[] end
     "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
     "art/cover.png": CONTENT_PNG,
   });
-  const c = await run({ zip });
+  const c = await run({ zip, request: { ...REQUEST, confirmed: [{ path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "market.rights.art", text_version: 1 }] } });
   assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
   assert.equal(c.entry.content.length, 1);
   assert.equal(c.entry.content[0].path, "art/cover.png");
@@ -356,4 +361,96 @@ test("an id another publisher lists is taken, and a look-alike is confusable", a
   const look = { entry: { id: "astra-staging-author/staging-csharp-g1", publisher: { account: "squatter", repo_id: 1, repo_owner_id: 2 } }, meta: {} };
   const b = await run({ state: emptyState({ entries: [look] }) });
   assert.ok(codes(b).includes("E_ID_CONFUSABLE"));
+});
+
+// ── the lease: the pull model (lane C design §0 findings 1-3, §1.3, §1.6) ──
+
+const coverZip = () => makeZipBytes({
+  "astra-gi.toml": withCoverArt(),
+  "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
+  "art/cover.png": CONTENT_PNG,
+});
+const COVER = { path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "market.rights.art", text_version: 3 };
+
+test("rights gate: a part the author has not confirmed waits (W_CONTENT_UNCONFIRMED), is never listed, and is reported with its parts", async () => {
+  const c = await run({ zip: coverZip() });
+  assert.equal(c.verdict, "wait", JSON.stringify(c.findings));
+  assert.ok(codes(c).includes("W_CONTENT_UNCONFIRMED"));
+  assert.equal(c.entry, undefined, "a wait carries no entry");
+  assert.deepEqual(c.parts.map((p) => [p.path, p.kind, p.sha256]), [["art/cover.png", "art", sha256(CONTENT_PNG)]], "the result door needs the parts to ask about");
+});
+
+test("rights gate: a confirmation covers a part only at the SAME path and the SAME sha256", async () => {
+  const otherSha = await run({ zip: coverZip(), request: { ...REQUEST, confirmed: [{ ...COVER, sha256: "a".repeat(64) }] } });
+  assert.equal(otherSha.verdict, "wait", "a changed file is asked about again");
+  assert.ok(codes(otherSha).includes("W_CONTENT_UNCONFIRMED"));
+  const otherPath = await run({ zip: coverZip(), request: { ...REQUEST, confirmed: [{ ...COVER, path: "art/other.png" }] } });
+  assert.equal(otherPath.verdict, "wait");
+});
+
+test("rights gate: full coverage lists the release with content_confirmed {text_id: text_version}, and no account", async () => {
+  const c = await run({ zip: coverZip(), request: { ...REQUEST, confirmed: [COVER, { path: "art/gone.png", sha256: "b".repeat(64), text_id: "market.rights.audio", text_version: 2 }] } });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.deepEqual(c.entry.content_confirmed, { "market.rights.art": 3 }, "the text version the part was confirmed under, and only the texts a present part used");
+});
+
+test("rights gate: a release with no content parts needs no confirmation and says none", async () => {
+  const c = await run();
+  assert.equal(c.verdict, "accept");
+  assert.equal(c.entry.content_confirmed, undefined);
+});
+
+test("binding: the owner-file line's SHA-256 must be the lease's binding_token_sha256", async () => {
+  const zip = stagingZip();
+  const good = await run({ zip });
+  assert.equal(good.verdict, "accept", JSON.stringify(good.findings));
+  const bad = await run({ zip, request: { ...REQUEST, binding_token_sha256: bindingTokenSha256("someoneElsesToken_0123456789") } });
+  assert.equal(bad.verdict, "refuse");
+  assert.ok(codes(bad).includes("E_UNBOUND"));
+  // bound, and the tag's line is the listed one but not the service's current binding
+  const stale = await run({ zip, state: emptyState({ bindings: { 900000001: BINDING } }), request: { ...REQUEST, binding_token_sha256: bindingTokenSha256("aNewlyMintedToken_0123456789") } });
+  assert.ok(codes(stale).includes("E_UNBOUND"), JSON.stringify(stale.findings));
+  // bound, the line is the listed one, and the lease names no binding (nothing to compare)
+  const same = await run({ zip, state: emptyState({ bindings: { 900000001: BINDING } }), request: { ...REQUEST, binding_token_sha256: null } });
+  assert.equal(same.verdict, "accept", JSON.stringify(same.findings));
+});
+
+test("account: a first binding names the repository owner's GitHub login, never an account the request carries (ID-1, BOT-10)", async () => {
+  const c = await run({ request: { ...REQUEST, account: "minice-subject-0042" } });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(c.entry.publisher.account, "astra-staging-author");
+  assert.equal(c.meta.binding.account, "astra-staging-author");
+  assert.ok(!JSON.stringify(c).includes("minice-subject-0042"), "no request account reaches the candidate");
+  // a renamed owner keeps the login it was first bound under
+  const zip = stagingZip();
+  const renamed = { ...fixture("repo.json"), owner: { id: 800000001, login: "renamed-author" } };
+  const later = await run({ zip, github: fakeGithub({ zip, repo: renamed }), state: emptyState({ bindings: { 900000001: BINDING } }) });
+  assert.equal(later.entry.publisher.account, "astra-staging-author");
+});
+
+test("parseRequest: a lease item, strictly; no account, token or subject member is accepted", () => {
+  const ok = parseRequest({ lease_id: "L-1", repo_id: 900000001, tag: null, binding_token_sha256: "c".repeat(64), confirmed: [COVER], extra: 1 });
+  assert.deepEqual(ok, { lease_id: "L-1", repo_id: 900000001, tag: null, binding_token_sha256: "c".repeat(64), confirmed: [COVER] });
+  const bad = (doc, re) => assert.throws(() => parseRequest(doc), re);
+  bad({ ...ok, lease_id: "../x" }, /lease_id/);
+  bad({ ...ok, binding_token_sha256: "C".repeat(64) }, /binding_token_sha256/);
+  bad({ ...ok, binding_token_sha256: "c".repeat(63) }, /binding_token_sha256/);
+  bad({ ...ok, confirmed: [{ ...COVER, text_version: 0 }] }, /confirmed\[0\]/);
+  // a text id is dot-separated segments, each [a-z][a-z0-9_-]* (games-index-v1 content_confirmed)
+  for (const id of ["market..rights", "market.rights.", ".market", "Market.rights", "market.9rights"]) {
+    bad({ ...ok, confirmed: [{ ...COVER, text_id: id }] }, /confirmed\[0\]/);
+  }
+  bad({ ...ok, confirmed: [COVER, { ...COVER, path: "b.png", text_version: 4 }] }, /CURRENT version/);
+  for (const k of ["account", "binding_token", "subject"]) bad({ ...ok, [k]: "x" }, new RegExp(k));
+});
+
+test("Check now: a lease with no tag ingests the latest stable release, and a repository with none is refused", async () => {
+  const zip = stagingZip();
+  const c = await run({ zip, request: { ...REQUEST, tag: null } });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(c.request.tag, "v1.0.0");
+  assert.equal(c.request.lease_id, "lease-1");
+  const none = await run({ zip, request: { ...REQUEST, tag: null }, github: fakeGithub({ zip, latest: null }) });
+  assert.ok(codes(none).includes("E_RELEASE_NOT_FOUND"));
+  assert.equal(none.request.tag, null);
 });

@@ -1,14 +1,24 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Minice — https://minice.ai
 #
-# Sign both documents (A§5.1; lib/pipeline.mjs). One run:
-#   - accepts the candidate a successful Ingest run produced (workflow_run),
-#   - or applies ONE moderator act (repository_dispatch `games-act`, sent by
-#     the plugins service after the moderator's console 2FA) — the acts path,
-#   - or takes the plugins service's health counts (`games-health`),
-# and in every case re-signs BOTH astra.games.index/1 and
-# astra.games.withdrawn/1, self-verifies them, and pushes the state and the
-# documents to the `data` branch.
+# Sign both documents (A§5.1; lib/pipeline.mjs), under the PULL model (lane C
+# design §1.3, §1.9 item 3). The plugins service holds no GitHub credential
+# (contract OD-12): its waker dispatches this workflow with {"ref":"main"}
+# and no inputs (INV-33), and an Ingest run ending triggers it. Three jobs:
+#
+#   work    pulls the moderator acts and the health counts the service holds
+#           (GET bot/games/work) into acts.json/health.json, and counts the
+#           Ingest run's candidates. Environment `games-service` (no
+#           secrets), OIDC only. When there is nothing to sign, the run ends
+#           here: resign.yml keeps the daily re-sign.
+#   sign    accepts the candidates, applies the acts (each confirmation ref
+#           once), and re-signs BOTH astra.games.index/1 and
+#           astra.games.withdrawn/1, self-verifies them, and pushes the state
+#           and the documents to the `data` branch.
+#   report  posts astra.games.sign-result/1 (POST bot/games/sign-results) and
+#           wakes the service's fetch (POST games/signed-wake, no
+#           credential); then fails the run if an act was refused, after
+#           everything else landed. Environment `games-service`, OIDC only.
 #
 # The signing secrets exist only in the `publish-games` environment (one
 # environment per kind, with the registry `publish` environment's branch
@@ -16,10 +26,10 @@
 # and nowhere else (test/workflows.test.mjs). Which keys they may be is
 # decided by trust.json's `kind_keys`, verified under the compiled root keys
 # before anything is signed (lib/trust.mjs): rotating to `next` is setting
-# GAMES_SIGNING_KEY_NEXT, nothing more. The
-# candidate is data from a job that read a stranger's release: it is re-
-# validated against the schema and the catalogue's state, and no zip is
-# opened here. Event payloads are read from the event file by bin/sign.mjs.
+# GAMES_SIGNING_KEY_NEXT, nothing more. A candidate is data from a job that
+# read a stranger's release: it is re-validated against the schema and the
+# catalogue's state, and no zip is opened here. Candidates are taken only
+# from this repository's own ingest.yml, run on main.
 
 name: Sign
 
@@ -27,8 +37,6 @@ on:
   workflow_run:
     workflows: [Ingest]
     types: [completed]
-  repository_dispatch:
-    types: [games-act, games-health]
   workflow_dispatch:
 
 permissions: {}
@@ -38,15 +46,66 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  work:
+    name: Pull the work from the plugins service
+    # Only this repository's ingest.yml, run on main by the waker or the
+    # schedule, may hand candidates to the signer; a branch's workflow named
+    # "Ingest" never does. A failed leg still leaves the others' candidates.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.path == '.github/workflows/ingest.yml' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'schedule') &&
+        (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: games-service
+    permissions:
+      contents: read
+      actions: read     # list the Ingest run's artifacts
+      id-token: write   # an OIDC token whose audience the service pins; no secret
+    outputs:
+      todo: ${{ steps.work.outputs.todo }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GAMES_SERVICE_URL: ${{ vars.GAMES_SERVICE_URL }}
+      GAMES_SERVICE_AUDIENCE: ${{ vars.GAMES_SERVICE_AUDIENCE }}
+      INGEST_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Pull acts and health; count the candidates
+        id: work
+        run: node bin/service.mjs sign-work --out "$RUNNER_TEMP/work"
+
+      - name: Keep the work for the signer
+        if: steps.work.outputs.todo == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: games-work
+          path: ${{ runner.temp }}/work
+          if-no-files-found: error
+          retention-days: 1
+
   sign:
     name: Sign both documents
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    needs: work
+    if: needs.work.outputs.todo == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: publish-games
     permissions:
       contents: write   # push the data branch
-      actions: read     # download the Ingest run's artifact
+      actions: read     # download the Ingest run's artifacts
     outputs:
       issued_at: ${{ steps.sign.outputs.issued_at }}
       key_id: ${{ steps.sign.outputs.key_id }}
@@ -78,11 +137,17 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Fetch the candidate from the Ingest run
+      - name: Fetch the work job's acts and health
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: games-work
+          path: ${{ runner.temp }}/work
+
+      - name: Fetch the candidates from the Ingest run
         if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: games-candidate
+          pattern: games-candidate-*
           path: ${{ runner.temp }}/candidates
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
@@ -92,7 +157,7 @@ jobs:
         env:
           GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
           GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
-        run: node bin/sign.mjs --data catalogue-data --trust registry/registry/v1/trust.json --candidates "$RUNNER_TEMP/candidates" --from-event
+        run: node bin/sign.mjs --data catalogue-data --trust registry/registry/v1/trust.json --candidates "$RUNNER_TEMP/candidates" --acts "$RUNNER_TEMP/work/acts.json" --health "$RUNNER_TEMP/work/health.json" --report "$RUNNER_TEMP/report/sign-report.json"
 
       - name: Push the state and the documents to `data`
         id: push
@@ -109,33 +174,43 @@ jobs:
           git push -q origin HEAD:data
           echo "data_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Fail the run when an act was refused (after everything else landed)
-        if: steps.sign.outputs.refused_acts != '0'
-        run: |
-          echo "a moderator act was refused; see the Sign step's log"
-          exit 1
+      - name: Keep the run's report for the report job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: games-sign-report
+          path: ${{ runner.temp }}/report/sign-report.json
+          if-no-files-found: error
+          retention-days: 7
 
-  notify:
-    name: Wake the plugins service
+  report:
+    name: Report to the plugins service and wake it
     needs: sign
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    environment: games-service
     permissions:
+      contents: read
       id-token: write   # an OIDC token whose audience the service pins; no secret
+    env:
+      GAMES_SERVICE_URL: ${{ vars.GAMES_SERVICE_URL }}
+      GAMES_SERVICE_AUDIENCE: ${{ vars.GAMES_SERVICE_AUDIENCE }}
+      DATA_SHA: ${{ needs.sign.outputs.data_sha }}
     steps:
       - name: Check out the catalogue's code (main)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - name: Notify
-        env:
-          GAMES_NOTIFY_URL: ${{ vars.GAMES_NOTIFY_URL }}
-          GAMES_NOTIFY_AUDIENCE: ${{ vars.GAMES_NOTIFY_AUDIENCE }}
-          ISSUED_AT: ${{ needs.sign.outputs.issued_at }}
-          KEY_ID: ${{ needs.sign.outputs.key_id }}
-          DATA_SHA: ${{ needs.sign.outputs.data_sha }}
-        run: node bin/notify.mjs
+
+      - name: Fetch the run's report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: games-sign-report
+          path: ${{ runner.temp }}/report
+
+      - name: Report, wake, and fail on a refused act (after everything else landed)
+        run: node bin/service.mjs sign-report --report "$RUNNER_TEMP/report/sign-report.json"
