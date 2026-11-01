@@ -176,7 +176,8 @@ def cdh(name, flags, crc, csz, usz, off):
     return struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 20, 20, flags, 8, 0, 0x21, crc, csz, usz, len(name), 0, 0, 0, 0, 0, off) + name
 def eocd(n, cdsz, cdoff):
     return struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, n, n, cdsz, cdoff, 0)
-l = lfh(name, 0x08, 0, 0) + comp
+dd = struct.pack('<IIII', 0x08074b50, crc, len(comp), len(raw))  # right after comp -- the entry's own recorded end
+l = lfh(name, 0x08, 0, 0) + comp + dd
 cd = cdh(name, 0x08, crc, len(comp), len(raw), 0)
 sys.stdout.buffer.write(l + cd + eocd(1, len(cd), len(l)))
 `;
@@ -223,4 +224,132 @@ test("mutation: the same entry with no Unicode Path extra field passes", () => {
   // of payload) -- the ONE fact fixed is the absent extra field.
   const zipPath = writeZip(buildStoredZip({ name: "notes.txt", data: Buffer.from("payload") }));
   assert.deepEqual(verifyZipHeaders(zipPath), { ok: true });
+});
+
+// ── round 2 (astra-ce sec-probe2): a bit-3 entry's data descriptor must
+// sit EXACTLY at its recorded end, the Deflate end-check must drain the
+// inflater fully, and it must run on every Deflated entry including a
+// ZIP64-sentinel'd one. ───────────────────────────────────────────────
+
+/** A hand-built single-entry Stored zip using bit 3, whose data
+ * descriptor sits at `ddOffset` bytes after the entry's own data instead
+ * of immediately after it -- 0 is the correct, legitimate placement. */
+function buildStoredBit3Zip({ name, data, ddOffset = 0, ddSignature = true }) {
+  const script = `
+import base64, json, struct, sys, zlib
+req = json.loads(sys.stdin.read())
+name = req["name"].encode()
+data = base64.b64decode(req["data"])
+crc = zlib.crc32(data)
+def lfh(name, flags):
+    return struct.pack('<IHHHHHIIIHH', 0x04034b50, 20, flags, 0, 0, 0x21, 0, 0, 0, len(name), 0) + name
+def cdh(name, flags, crc, csz, usz, off):
+    return struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 20, 20, flags, 0, 0, 0x21, crc, csz, usz, len(name), 0, 0, 0, 0, 0, off) + name
+def eocd(n, cdsz, cdoff):
+    return struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, n, n, cdsz, cdoff, 0)
+dd = (struct.pack('<I', 0x08074b50) if req["ddSignature"] else b'') + struct.pack('<III', crc, len(data), len(data))
+pad = b'\\0' * req["ddOffset"]
+l = lfh(name, 0x08) + data + pad + dd
+cd = cdh(name, 0x08, crc, len(data), len(data), 0)
+sys.stdout.buffer.write(l + cd + eocd(1, len(cd), len(l)))
+`;
+  return execFileSync("python3", ["-c", script], {
+    input: JSON.stringify({ name, data: data.toString("base64"), ddOffset, ddSignature }),
+  });
+}
+
+test("Zip Cloaking vector (stored-dd.zip): a data descriptor placed past its entry's recorded end is refused", () => {
+  const r = verifyZipHeaders(path.join(FIXTURES, "stored-dd.zip"));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /E_ZIP_HEADERS_INCONSISTENT/);
+  assert.match(r.error, /data descriptor/);
+  // The real, signed descriptor in this vector describes notes.txt's data
+  // PLUS launch.sh's whole header and body -- which is exactly how a
+  // streaming reader that trusts it would be fooled into swallowing
+  // launch.sh as part of notes.txt instead of reading it separately.
+  const names = JSON.parse(
+    execFileSync("python3", ["-c", "import zipfile,sys,json; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", path.join(FIXTURES, "stored-dd.zip")]),
+  );
+  assert.deepEqual(names.sort(), ["launch.sh", "notes.txt"]);
+});
+
+test("mutation: a data descriptor exactly at the recorded end passes, with or without its optional signature", () => {
+  for (const ddSignature of [true, false]) {
+    const zipPath = writeZip(buildStoredBit3Zip({ name: "notes.txt", data: Buffer.from("harmless notes\n"), ddOffset: 0, ddSignature }));
+    assert.deepEqual(verifyZipHeaders(zipPath), { ok: true }, `ddSignature=${ddSignature}`);
+  }
+});
+
+test("mutation: a data descriptor even ONE byte past the recorded end is refused", () => {
+  const zipPath = writeZip(buildStoredBit3Zip({ name: "notes.txt", data: Buffer.from("harmless notes\n"), ddOffset: 1 }));
+  const r = verifyZipHeaders(zipPath);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /data descriptor/);
+});
+
+test("Deflate end-check drains the inflater fully before judging eof (a legitimate ~1 MiB+1 file of zeros passes)", () => {
+  const data = Buffer.alloc(1024 * 1024 + 1, 0);
+  const zipPath = writeZip(makeZipBytes({ "astra-gi.toml": "x", "zeros.bin": data }));
+  assert.deepEqual(verifyZipHeaders(zipPath), { ok: true });
+});
+
+/** A hand-built single-entry bit-3 Deflated zip whose CENTRAL DIRECTORY
+ * sizes are the ZIP64 sentinel (0xFFFFFFFF), resolved from a ZIP64
+ * extended-information extra field (tag 0x0001, uncompressed then
+ * compressed size, 8 bytes each) carrying `realUsize`/`realCsize` --
+ * which a caller can set wrong, to prove the end-check actually runs on
+ * the RESOLVED values rather than skipping the entry. `includeZip64Extra
+ * = false` omits the extra field entirely, leaving the sentinel
+ * unresolved. */
+function buildZip64Bit3DeflateZip({ name, data, realUsize = null, realCsize = null, includeZip64Extra = true }) {
+  const script = `
+import base64, json, struct, sys, zlib
+req = json.loads(sys.stdin.read())
+name = req["name"].encode()
+raw = base64.b64decode(req["data"])
+co = zlib.compressobj(9, zlib.DEFLATED, -15)
+comp = co.compress(raw) + co.flush()
+crc = zlib.crc32(raw)
+real_usize = req["realUsize"] if req["realUsize"] is not None else len(raw)
+real_csize = req["realCsize"] if req["realCsize"] is not None else len(comp)
+extra = (struct.pack('<HH', 0x0001, 16) + struct.pack('<QQ', real_usize, real_csize)) if req["includeZip64Extra"] else b''
+SENTINEL = 0xFFFFFFFF
+def lfh(name, flags):
+    return struct.pack('<IHHHHHIIIHH', 0x04034b50, 20, flags, 8, 0, 0x21, 0, 0, 0, len(name), 0) + name
+def cdh(name, flags, crc, off, extra):
+    return struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 20, 20, flags, 8, 0, 0x21, crc, SENTINEL, SENTINEL, len(name), len(extra), 0, 0, 0, 0, off) + name + extra
+def eocd(n, cdsz, cdoff):
+    return struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, n, n, cdsz, cdoff, 0)
+dd = struct.pack('<IIII', 0x08074b50, crc, len(comp), len(raw))  # the DD's own 32-bit fields carry the REAL (small) sizes
+l = lfh(name, 0x08) + comp + dd
+cd = cdh(name, 0x08, crc, 0, extra)
+sys.stdout.buffer.write(l + cd + eocd(1, len(cd), len(l)))
+`;
+  return execFileSync("python3", ["-c", script], {
+    input: JSON.stringify({ name, data: data.toString("base64"), realUsize, realCsize, includeZip64Extra }),
+  });
+}
+
+test("a ZIP64-sentinel'd entry resolves its real size from the extra field and passes", () => {
+  const zipPath = writeZip(buildZip64Bit3DeflateZip({ name: "big.bin", data: Buffer.from("some real content, not actually huge") }));
+  assert.deepEqual(verifyZipHeaders(zipPath), { ok: true });
+});
+
+test("mutation: a ZIP64 sentinel with no resolving extra field is refused", () => {
+  const zipPath = writeZip(buildZip64Bit3DeflateZip({ name: "big.bin", data: Buffer.from("some real content"), includeZip64Extra: false }));
+  const r = verifyZipHeaders(zipPath);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ZIP64 sentinel/);
+});
+
+test("mutation: the end-check still runs on a ZIP64-sentinel'd entry -- a lied-about resolved size is caught", () => {
+  // The real deflate stream decodes to the real content's length; the
+  // ZIP64 extra claims a different uncompressed size. If ZIP64
+  // resolution silently skipped the end-check instead of feeding it the
+  // resolved value, this would pass; it must not.
+  const data = Buffer.from("some real content");
+  const zipPath = writeZip(buildZip64Bit3DeflateZip({ name: "big.bin", data, realUsize: data.length + 1000 }));
+  const r = verifyZipHeaders(zipPath);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /uncompressed size/);
 });

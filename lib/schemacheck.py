@@ -366,6 +366,18 @@ ZIP_METHOD_DEFLATED = 8
 # it a second, independent name a central-directory-only parser (this
 # function) would never otherwise see. Refused outright, never read.
 UNICODE_PATH_EXTRA_TAG = 0x7075
+# APPNOTE 4.5.3: the ZIP64 extended information extra field. A 32-bit size
+# field of exactly 0xFFFFFFFF is a SENTINEL, not a size; the real 64-bit
+# value sits here instead. Only entry-level sizes are resolved (never the
+# EOCD's own locator fields below, which stay a hard refusal) -- a single
+# entry's real UNCOMPRESSED size can legitimately need 64 bits (a sparse
+# content file) even while this repository's own 256 MiB archive cap
+# means its COMPRESSED size and every offset never will.
+ZIP64_EXTRA_TAG = 0x0001
+ZIP64_SENTINEL = 0xFFFFFFFF
+# APPNOTE 4.3.9: the (optional) data descriptor signature. Its absence is
+# part of the format, not a sign of tampering by itself (APPNOTE 4.3.9.3).
+DATA_DESCRIPTOR_SIG = 0x08074B50
 
 
 def _find_eocd(buf: bytes) -> int:
@@ -392,6 +404,74 @@ def _extra_has_tag(extra: bytes, tag: int) -> bool:
             return True
         pos += 4 + size
     return False
+
+
+def _resolve_zip64_sizes(extra: bytes, csize: int, usize: int):
+    """When either size is the ZIP64 sentinel, reads the real 64-bit value
+    from this entry's own ZIP64 extended information extra field (tag
+    0x0001), in the field order the format fixes: uncompressed size, then
+    compressed size -- each present only when its own 32-bit field was
+    the sentinel, so a record with only one sentinel'd field is only 8
+    bytes long, not 16. Returns `(csize, usize)` unchanged when neither is
+    a sentinel, or None when a sentinel's real value cannot be found (no
+    tag 0x0001, or its record is shorter than the sentinels in play need)."""
+    if csize != ZIP64_SENTINEL and usize != ZIP64_SENTINEL:
+        return csize, usize
+    pos = 0
+    while pos + 4 <= len(extra):
+        tag_id, size = struct.unpack_from("<HH", extra, pos)
+        data = extra[pos + 4:pos + 4 + size]
+        if tag_id == ZIP64_EXTRA_TAG:
+            off = 0
+            if usize == ZIP64_SENTINEL:
+                if off + 8 > len(data):
+                    return None
+                usize = struct.unpack_from("<Q", data, off)[0]
+                off += 8
+            if csize == ZIP64_SENTINEL:
+                if off + 8 > len(data):
+                    return None
+                csize = struct.unpack_from("<Q", data, off)[0]
+            return csize, usize
+        pos += 4 + size
+    return None
+
+
+def _check_data_descriptor(buf: bytes, end: int, crc: int, csize: int, usize: int):
+    """A bit-3 (general-purpose flag "data descriptor present") entry's
+    data descriptor, required EXACTLY at `end` -- the entry's own
+    recorded end: its local header plus its declared compressed data,
+    nothing more, nothing less. The leading 4-byte signature is OPTIONAL
+    by the format itself (APPNOTE 4.3.9.3: older tools omit it); whether
+    or not it is there, the crc/compressed-size/uncompressed-size that
+    follow must equal the central directory's own (its only trustworthy
+    copy). A descriptor that is missing, truncated, or sitting anywhere
+    but exactly here -- even if a byte-for-byte-correct one exists further
+    into the file, describing a LONGER span that swallows a hidden entry
+    -- is refused: astra-ce sec-probe `stored-dd.zip` is exactly this
+    shape, a real signed descriptor whose crc/sizes describe the entry's
+    own data PLUS a smuggled second header, placed after that smuggled
+    header rather than right after the entry's own 15 declared bytes.
+    Returns `(None, the descriptor's own byte length -- signature included
+    when present)` when consistent, or `(reason, None)`. The length is the
+    caller's to add to this entry's own tiled range: the descriptor's
+    bytes are real, physically-present file content between this entry's
+    data and whatever comes next, not something a plain `compressed_size`
+    already accounts for.
+    """
+    pos = end
+    sig_len = 4 if pos + 4 <= len(buf) and struct.unpack_from("<I", buf, pos)[0] == DATA_DESCRIPTOR_SIG else 0
+    pos += sig_len
+    if pos + 12 > len(buf):
+        return f"no data descriptor at its recorded end (offset {end})", None
+    dcrc, dcsize, dusize = struct.unpack_from("<III", buf, pos)
+    if dcrc != crc or dcsize != csize or dusize != usize:
+        return (
+            f"the data descriptor at its recorded end (offset {end}) carries "
+            f"(crc={dcrc},csize={dcsize},usize={dusize}), which disagrees with the "
+            f"central directory's (crc={crc},csize={csize},usize={usize})"
+        ), None
+    return None, sig_len + 12
 
 
 def _verify_entry_data(buf: bytes, data_start: int, method: int, csize: int, usize: int, crc: int):
@@ -430,6 +510,11 @@ def _verify_entry_data(buf: bytes, data_start: int, method: int, csize: int, usi
         d = zlib.decompressobj(-15)
         try:
             out = d.decompress(span)
+            # Drain whatever the decompressor is still holding once input
+            # has run out, BEFORE judging .eof/.unused_data -- decompress()
+            # alone is not guaranteed to flush every buffered output byte
+            # the moment the stream's own end-of-stream marker is reached.
+            out += d.flush()
         except zlib.error as e:
             return f"its Deflate stream does not decode: {e}"
         if not d.eof:
@@ -473,16 +558,31 @@ def verify_zip_headers(zip_path) -> dict:
         a Stored entry whose sizes disagree, or a Deflated entry whose
         raw-inflated stream does not consume exactly its declared
         compressed size and produce exactly its declared uncompressed
-        size and CRC-32 (`_verify_entry_data`) -- DEFLATE SLACK plus a
-        legitimate data-descriptor entry (bit 3, never refused on its own:
-        GIs come from arbitrary build tools that may set it) is exactly
-        the tiling check above cannot see, because the slack sits INSIDE
-        an entry's own declared range, not in a gap between entries.
-    ZIP64 (a central directory whose own locator fields are the 0xFFFF /
-    0xFFFFFFFF sentinel) is refused outright rather than half-verified:
-    nothing this repository ingests needs it, and a checker that silently
-    skipped the fields it does not understand would be worse than one that
-    says so.
+        size and CRC-32 (`_verify_entry_data`, run on EVERY Deflated entry
+        -- its sizes resolved first if either is a ZIP64 sentinel) --
+        DEFLATE SLACK plus a legitimate data-descriptor entry (bit 3,
+        never refused on its own: GIs come from arbitrary build tools
+        that may set it) is exactly what the tiling check above cannot
+        see, because the slack sits INSIDE an entry's own declared range,
+        not in a gap between entries;
+      - a bit-3 entry's data descriptor is missing, wrong, or sitting
+        anywhere but EXACTLY at the entry's own recorded end
+        (`_check_data_descriptor`) -- a byte-for-byte-correct descriptor
+        placed further into the file, describing a LONGER span that also
+        covers a smuggled second header, is a different lie than the
+        Deflate-slack one above and needs its own check: a Stored entry
+        has no deflate stream to catch it, and a Deflated one could carry
+        a genuine, exactly-fitting stream while still having its
+        descriptor planted in the wrong place.
+    ZIP64 at the END OF CENTRAL DIRECTORY (a locator whose own fields are
+    the 0xFFFF / 0xFFFFFFFF sentinel) is refused outright rather than
+    half-verified: nothing this repository ingests needs an archive that
+    large, and a checker that silently skipped fields it does not
+    understand would be worse than one that says so. A SINGLE entry's own
+    ZIP64 extra field is different and IS resolved (`_resolve_zip64_sizes`):
+    a legitimately huge uncompressed size (a sparse content file) inside an
+    otherwise ordinary, small archive is not the same claim as an archive
+    too large for this check to read at all.
     Returns {"ok": True} or {"ok": False, "error": "..."}.
     """
     try:
@@ -559,6 +659,18 @@ def verify_zip_headers(zip_path) -> dict:
         if _extra_has_tag(central_extra, UNICODE_PATH_EXTRA_TAG) or _extra_has_tag(local_extra, UNICODE_PATH_EXTRA_TAG):
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r} carries a Unicode Path extra field (0x7075), which is never allowed"}
 
+        # ZIP64: resolved AFTER the raw local-vs-central comparison above
+        # (which must see the SAME sentinel on both sides to agree, not a
+        # resolved value on one side only), but before anything that needs
+        # the entry's real size -- which is every check from here on, so
+        # the Deflate end-check below runs correctly on EVERY entry, large
+        # or small, instead of either mis-slicing a 4-byte sentinel as a
+        # ~4 GiB span or skipping the check via the "past EOF" guard.
+        resolved = _resolve_zip64_sizes(central_extra, ccsize, cusize)
+        if resolved is None:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s size is the ZIP64 sentinel with no resolving extra field (tag 0x0001)"}
+        ccsize, cusize = resolved
+
         data_start = lname_start + lfn_len + lextra_len
         data_end = data_start + ccsize  # the central directory's size is authoritative either way
         if data_end > len(buf):
@@ -566,7 +678,19 @@ def verify_zip_headers(zip_path) -> dict:
         bad = _verify_entry_data(buf, data_start, ccomp, ccsize, cusize, ccrc)
         if bad:
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}: {bad}"}
-        ranges.append((lho, data_end, name))
+        # A data descriptor is required EXACTLY at the entry's own
+        # recorded end, after (not instead of) the exact-end check above
+        # -- a Deflated bit-3 entry's "real stream fits the declared span"
+        # fact and its "a descriptor confirms that span, in the right
+        # place" fact are two different lies to tell.
+        dd_len = 0
+        if lflags & FLAG_DATA_DESCRIPTOR:
+            dd_bad, dd_len = _check_data_descriptor(buf, data_end, ccrc, ccsize, cusize)
+            if dd_bad:
+                return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}: {dd_bad}"}
+        # The descriptor's own bytes are real file content between this
+        # entry and whatever comes next -- part of its tiled range too.
+        ranges.append((lho, data_end + dd_len, name))
 
     ranges.sort(key=lambda r: r[0])
     cursor = 0
