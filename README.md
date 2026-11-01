@@ -72,10 +72,63 @@ abandoned code moves only by a moderator act that cites its evidence.
 | `first-party.json` | the owner's repositories by GitHub `repository_id`, and the per-release digest pins |
 | `loaders.json` | the seed allowlist of loader builds that ship off by default (A§4.5); moderator acts add or remove on top |
 | `keys.json` | the published public keys of `games-current` and `games-next` (K14) |
+| `gi-probe.json` | the pinned `gi-probe` build ingest runs; null until astra-game-launcher 0.5.0, and ingest waits until then |
+| `.github/action-pins.json` | every action, by the commit its release tag peels to |
 | `fixtures/` | the staging fixtures ingest is tested against, and the list-shape recordings (R29) |
 | `lib/`, `bin/` | ingest, signing, acts, promotion; `lib/vendor/` holds the pinned copies |
 | `.github/workflows/` | `ingest.yml` (no secrets), `sign.yml`, `promote.yml`, `resign.yml`, `ci.yml` |
 | branch `data` | the catalogue's state and the signed documents under `dist/`; written only by `sign.yml` and `resign.yml` |
+
+## How a release becomes a listing
+
+1. The plugins service sends `repository_dispatch` **`games-release`**
+   `{repo_id, tag, account?, binding_token?}` (registration, poll, Check now).
+2. **Ingest** (`ingest.yml`, no secret) checks the release and uploads an
+   unsigned candidate: `accept`, `hold` (a person decides), `wait` (retried)
+   or `refuse`.
+3. **Sign** (`sign.yml`, `games-signing`) re-checks the candidate against the
+   schema and the catalogue's state, lists it, and re-signs both documents to
+   the `data` branch under `dist/`.
+4. **Promote** (`promote.yml`) makes first-party GitHub releases match what
+   was signed.
+
+## Moderator acts
+
+The site sends one act per `repository_dispatch` **`games-act`**, as
+`client_payload.act`, after the moderator's console 2FA:
+
+```json
+{ "schema": "astra.games.act/1", "type": "M_REVOKE", "at": 1798675100,
+  "by": { "account": "a-moderator" },
+  "confirmation": { "kind": "console-2fa", "ref": "<the site's confirmation id>" },
+  "repo_id": 987654321, "versions": "<=1.1.9", "entry_id": "someone/peak-astra",
+  "reason_code": "security", "reason_text": "…" }
+```
+
+| type | payload |
+|---|---|
+| `M_YANK` `M_DELIST` `M_DEPRECATE` `M_REVOKE` | `repo_id`, `versions` (`*`, comparators, `\|\|`), `entry_id` (required when the repository hosts several), `reason_code`, `reason_text`; a revoke may add `cascade.revoke: [entry ids]`; `break_glass` skips the 3-per-24-hours takedown bound |
+| `M_GAMES_EDIT` | `op: upsert` + `row` (a `games[]` row), or `op: delete` + `id` |
+| `M_ANTICHEAT_EDIT` | `op: add\|remove` + `row` (`{name, kind, value}`) |
+| `M_LOADERS_EDIT` | `op: add` + `row` (`{name, sha256}`), or `op: remove` + `row.sha256` |
+| `M_MARK_SOURCE_REVIEWED` | `entry_id`, `version` (the label binds to that release's digest) |
+| `M_REASSIGN_ENGINE_CODE` | `code`, `to` (`{account, repo_id, repo_owner_id}` of a listed foundation's publisher), `reason_text` |
+| `M_ADOPT_ENGINE_CODE` | `code`, `successor_entry_id`, `evidence: {unanswered_reports: [≥1], descriptor_failure: {kind: probe\|reports, refs: [≥1]}, successor_probe: "pass", successor_installs_without_failure: ≥1}` |
+| `M_SET_UNMAINTAINED` | `entry_id`, `unmaintained`, `successor_entry_id` |
+| `M_SET_RECOMMENDED_FOUNDATION` | `code`, `entry_id` (or null) |
+| `M_PROMOTE` | `entry_id`, `version` of a first-party prerelease |
+| `M_RELEASE_HOLD` | `hold_id` (`<repo_id>@<tag>`), `decision: accept\|refuse` |
+
+Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
+both documents in its own run. A refused act changes nothing and fails the
+run, after the re-sign has landed.
+
+The plugins service sends health counts as **`games-health`**
+`{health: {entry_id: {rating_avg (hundredths), rating_count,
+open_reports_unanswered, reports_sent, reports_failed}}}`. `health`,
+`unmaintained`, `successor_entry_id` and `recommended_foundations` are
+computed and kept, and appear in the signed index once AstraPlugins'
+`games-index-v1.schema.json` declares them (lib/documents.mjs).
 
 ## Running the tests
 
