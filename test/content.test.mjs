@@ -48,6 +48,46 @@ const UNKNOWN_VS_ALLOWED = makeGlb({ extensions: {
 } });
 const ANIMATION_ONLY = makeGlb({ extensions: { VRMC_vrm_animation: {} }, extensionsUsed: ["VRMC_vrm_animation"] });
 
+// AstraPlugins 4976d60: a GLB built from LITERAL JSON text (never
+// JSON.stringify, which cannot itself name a member twice) or with a lying
+// chunk-length field, the same shape as AstraPlugins'
+// tools/check-games-goldens.py / testdata/games/content/vrm/gen.py builds
+// its hostile E_CONTENT_FORMAT goldens.
+function glbFromText(text) {
+  const bodyText = Buffer.from(text, "utf8");
+  const pad = (4 - (bodyText.length % 4)) % 4;
+  const body = Buffer.concat([bodyText, Buffer.alloc(pad, 0x20)]);
+  const chunk0 = Buffer.concat([
+    Buffer.from(new Uint32Array([body.length]).buffer),
+    Buffer.from("JSON", "ascii"),
+    body,
+  ]);
+  const header = Buffer.concat([
+    Buffer.from("glTF", "ascii"),
+    Buffer.from(new Uint32Array([2, 12 + chunk0.length]).buffer),
+  ]);
+  return Buffer.concat([header, chunk0]);
+}
+
+/** A whole GLB (the file's own total length is correct) whose JSON CHUNK
+ * header lies and claims 8 bytes more than the file actually holds after
+ * it -- "the GLB's JSON chunk runs past the end of the file". */
+function glbChunkPastEof(obj) {
+  const bodyText = Buffer.from(JSON.stringify(obj), "utf8");
+  const pad = (4 - (bodyText.length % 4)) % 4;
+  const chunk = Buffer.concat([bodyText, Buffer.alloc(pad, 0x20)]);
+  const chunkHeader = Buffer.concat([
+    Buffer.from(new Uint32Array([chunk.length + 8]).buffer),
+    Buffer.from("JSON", "ascii"),
+  ]);
+  const body = Buffer.concat([chunkHeader, chunk]);
+  const header = Buffer.concat([
+    Buffer.from("glTF", "ascii"),
+    Buffer.from(new Uint32Array([2, 12 + body.length]).buffer),
+  ]);
+  return Buffer.concat([header, body]);
+}
+
 function zipPathFor(files) {
   const dir = tmpdir();
   const p = path.join(dir, "astra-gi.zip");
@@ -357,4 +397,63 @@ test("a VRMC_vrm_animation-only GLB never reaches the VRM gate: no finding at al
   assert.equal(r.content.length, 1);
   assert.equal(r.content[0].vrm_licence, undefined);
   assert.equal(r.content[0].licence_source, "declared");
+});
+
+// ── E_CONTENT_FORMAT (AstraPlugins 4976d60): held BEFORE classification ──
+
+test("E_CONTENT_FORMAT: an animations-part GLB that names 'extensions' twice is refused, never read as plain", () => {
+  // A lenient parser keeps only the LAST "extensions" member ({}), so the
+  // file would classify as "plain" -- and a plain glTF in an "animations"
+  // part was never judged by the gate at all, publishing the avatar that
+  // the FIRST "extensions" member prohibits with no licence verdict.
+  const bytes = glbFromText(
+    '{"extensions": {"VRM": {"meta": {"licenseName": "Redistribution_Prohibited", "allowedUserName": "OnlyAuthor"}}}, "extensions": {}}',
+  );
+  const manifest = { integration: { content: [{ path: "animations/wave.glb", kind: "animations", title: "t", credit: "c", licence: "CC0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "animations/wave.glb": bytes });
+  const r = checkContent({ zipPath, manifest });
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_FORMAT);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.equal(f.path, "animations/wave.glb");
+  assert.deepEqual(r.content, [], "a format-refused part is never listed");
+});
+
+test("E_CONTENT_FORMAT: a GLB whose JSON chunk is declared past EOF is refused", () => {
+  const bytes = glbChunkPastEof({ asset: { version: "2.0" } });
+  const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": bytes });
+  const r = checkContent({ zipPath, manifest });
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_FORMAT);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.deepEqual(r.content, []);
+});
+
+test("E_CONTENT_FORMAT: a GLB naming an https:// image uri is refused (nothing Astra loads may fetch a URL)", () => {
+  const bytes = makeGlb({ asset: { version: "2.0" }, images: [{ uri: "https://example.invalid/t.png" }] });
+  const manifest = { integration: { content: [{ path: "art/portrait.glb", kind: "art", title: "t", credit: "c", licence: "CC0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "art/portrait.glb": bytes });
+  const r = checkContent({ zipPath, manifest });
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_FORMAT);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.deepEqual(r.content, []);
+});
+
+test("E_CONTENT_FORMAT: a .gltf buffer uri that climbs out of the release ('../') is refused", () => {
+  const text = JSON.stringify({ asset: { version: "2.0" }, buffers: [{ uri: "../evil.bin" }] });
+  const manifest = { integration: { content: [{ path: "models/prop.gltf", kind: "models", title: "t", credit: "c", licence: "CC0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "models/prop.gltf": text });
+  const r = checkContent({ zipPath, manifest });
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_FORMAT);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.deepEqual(r.content, []);
+});
+
+test("a .gltf naming a sibling .bin the release holds has no format finding", () => {
+  const text = JSON.stringify({ asset: { version: "2.0" }, buffers: [{ uri: "prop.bin" }] });
+  const manifest = { integration: { content: [{ path: "models/prop.gltf", kind: "models", title: "t", credit: "c", licence: "CC0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "models/prop.gltf": text, "models/prop.bin": Buffer.from([1, 2, 3, 4]) });
+  const r = checkContent({ zipPath, manifest });
+  assert.ok(!codesOf(r).includes(CODES.E_CONTENT_FORMAT), JSON.stringify(r.findings));
+  assert.equal(r.content.length, 1);
+  assert.equal(r.content[0].path, "models/prop.gltf");
 });

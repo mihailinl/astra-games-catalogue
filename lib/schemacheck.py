@@ -15,8 +15,8 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
     python3 lib/schemacheck.py content ZIP   < {"declared": [{"path", "kind", ...}, ...]}
         -> {"ok": true, "undeclared": [...], "missing": [...], "duplicates": [...],
             "parts": [{"path","sha256","licence_source","vrm_licence"?}],
-            "licence_refusals": [...], "licence_unknown": [...],
-            "licence_undeclared": [...], "gaps": [...]}
+            "licence_refusals": [...], "licence_conflicts": [...], "licence_unknown": [...],
+            "licence_undeclared": [...], "format_refusals": [{"path","detail"}, ...], "gaps": [...]}
          | {"ok": false, "error": "..."}
     python3 lib/schemacheck.py zipcheck ZIP
         -> {"ok": true} | {"ok": false, "error": "..."}   (Zip Cloaking, see verify_zip_headers)
@@ -56,6 +56,8 @@ import hashlib
 import io
 import json
 import pathlib
+import posixpath
+import re
 import struct
 import sys
 import tomllib
@@ -222,6 +224,100 @@ def parse_glb_json_chunk(raw):
         return None
 
 
+class GltfFormatError(ValueError):
+    """`E_CONTENT_FORMAT` (the content catalogue's ingest-v1.md §3 step 10,
+    adopted so the two gates agree on every file): a GLB that is not whole,
+    glTF JSON that does not parse or names a member twice, or an external
+    reference. Mirrors AstraPlugins tools/check-games-goldens.py at 4976d60
+    (spec/games-vrm-conflict-kindkeys)."""
+
+
+def _no_duplicate_members(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise GltfFormatError(f"the glTF JSON names {key!r} twice")
+        out[key] = value
+    return out
+
+
+def _strict_json(data: bytes):
+    try:
+        return json.loads(data.decode("utf-8"), object_pairs_hook=_no_duplicate_members)
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise GltfFormatError(f"the glTF JSON does not parse: {e}") from None
+
+
+def parse_glb_strict(raw: bytes) -> dict:
+    """A GLB's JSON chunk, or GltfFormatError. The GLB must be whole: its
+    header's total length equals the file's size and its first chunk is JSON
+    and ends inside the file, so a chunk declared past EOF is never read as
+    whatever bytes happen to be there. The JSON must parse with no member
+    named twice -- one reader's `allowRedistribution: false` is another's
+    `true`, and JSON that does not parse must never fall through to "plain",
+    which an animation part does not judge."""
+    if len(raw) < 20 or raw[0:4] != b"glTF":
+        raise GltfFormatError("not a GLB")
+    total = int.from_bytes(raw[8:12], "little")
+    if total != len(raw):
+        raise GltfFormatError(f"the GLB header says {total} bytes and the file has {len(raw)}")
+    if raw[16:20] != b"JSON":
+        raise GltfFormatError("the GLB's first chunk is not JSON")
+    chunk_len = int.from_bytes(raw[12:16], "little")
+    if 20 + chunk_len > len(raw):
+        raise GltfFormatError("the GLB's JSON chunk runs past the end of the file")
+    doc = _strict_json(raw[20:20 + chunk_len])
+    if not isinstance(doc, dict):
+        raise GltfFormatError("the glTF JSON is not an object")
+    return doc
+
+
+def gltf_uri_problem(doc: dict, is_glb: bool, path, present) -> str | None:
+    """No external reference (ingest-v1.md §3 step 10): in a GLB every
+    `images[].uri` and `buffers[].uri` is a `data:` URI; in a `.gltf` each is
+    a `data:` URI or a plain relative path -- no scheme, no `..`, no leading
+    `/`, no backslash -- naming a file the release holds (`present`, a set of
+    release-relative paths; None skips that last test)."""
+    for key in ("images", "buffers"):
+        items = doc.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict) or "uri" not in item:
+                continue
+            u = item["uri"]
+            if not isinstance(u, str):
+                return f"a {key} uri that is not a string: {u!r}"
+            if u.startswith("data:"):
+                continue
+            if is_glb:
+                return f"a GLB names an external uri {u!r}"
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", u) or u.startswith("/") or "\\" in u \
+                    or "/../" in f"/{u}/" or u in ("", "."):
+                return f"a uri that is not a plain relative path: {u!r}"
+            if present is not None and path is not None:
+                target = posixpath.normpath(posixpath.join(posixpath.dirname(path), u))
+                if target not in present:
+                    return f"a uri naming a file the release does not hold: {u!r}"
+    return None
+
+
+def gltf_format_problem(raw: bytes, path=None, present=None) -> str | None:
+    """Every GLB (by its magic) and every `.gltf`, in any part and of any
+    class: the reason it is `E_CONTENT_FORMAT`, or None. Runs BEFORE
+    classification."""
+    is_glb = raw[:4] == b"glTF"
+    if not is_glb and not (path is not None and path.lower().endswith(".gltf")):
+        return None
+    try:
+        doc = parse_glb_strict(raw) if is_glb else _strict_json(raw)
+    except GltfFormatError as e:
+        return str(e)
+    if not isinstance(doc, dict):
+        return "the glTF JSON is not an object"
+    return gltf_uri_problem(doc, is_glb, path, present)
+
+
 def extract_vrm_metas_doc(doc):
     """extract_vrm_metas over an already-parsed glTF JSON document (a GLB's
     JSON chunk or a `.gltf` file's whole text)."""
@@ -381,10 +477,10 @@ def gltf_class(doc):
     return "plain"
 
 
-def vrm_gate(raw, path=None):
+def vrm_gate(raw, path=None, present=None):
     """The full G4/G5 verdict for one glTF's bytes (a GLB by its magic, or a
     `.gltf` text file), reading BOTH a VRM 0.x and a VRM 1.0 meta when it
-    carries both (O-2). Returns {"status": "ok"|"refused"|"conflict"|"unknown",
+    carries both (O-2). Returns {"status": "ok"|"refused"|"conflict"|"unknown"|"format",
     "vrm_licence": {"vrm_version","fields"}|None, "refusal": {...}|None}.
     "unknown" is no VRM meta of either spec, meta that cannot be read, or a
     meta whose verdict is unknown (an unrecognised licence or permission
@@ -392,7 +488,15 @@ def vrm_gate(raw, path=None):
     (F_CONTENT_VRM_META_UNKNOWN) and passes only with the character checkbox
     and a declared licence (G5); `refusal` then names the deciding field
     when there is one. "conflict" is E_CONTENT_LICENCE_CONFLICT
-    (`rule_vrm_conflict`) and runs before any single-meta verdict."""
+    (`rule_vrm_conflict`) and runs before any single-meta verdict. "format" is
+    E_CONTENT_FORMAT (`gltf_format_problem`) and runs before even that --
+    AstraPlugins 4976d60: a GLB that is not whole, glTF JSON that does not
+    parse or names a member twice, or an external image/buffer uri, must
+    never fall through to a lenient parse that reads it as "unknown" or
+    "plain"."""
+    problem = gltf_format_problem(raw, path, present)
+    if problem is not None:
+        return {"status": "format", "vrm_licence": None, "refusal": {"field": "format", "detail": problem}}
     doc = gltf_document(raw, path)
     metas = extract_vrm_metas_doc(doc)
     if not metas:
@@ -841,10 +945,15 @@ def content_report(zip_path, declared):
     content_files = []
     parts_by_path = {}
     gaps = []
+    # Every file path in the release zip (not only the content-typed ones):
+    # what a `.gltf`'s plain relative buffer/image uri may name
+    # (gltf_uri_problem's `present`, AstraPlugins 4976d60).
+    present = set()
     with z:
         for info in z.infolist():
             if info.is_dir():
                 continue
+            present.add(info.filename)
             ext = pathlib.PurePosixPath(info.filename).suffix.lower()
             sniff = CONTENT_EXT_MAGIC.get(ext)
             if sniff is None:
@@ -867,11 +976,18 @@ def content_report(zip_path, declared):
 
         # The VRM gate's selection rule (AstraPlugins 516ba38's part_licence):
         # judged by the file's own bytes, never by a `.vrm` name. A `.astrachar`
-        # bundle's body is gated unconditionally (its own branch, below); every
-        # other content-typed file is classified by its glTF extensions when it
+        # bundle's body is gated unconditionally (its own branch, below, via
+        # vrm_gate -- which runs the format check itself); every other
+        # content-typed file is classified by its glTF extensions when it
         # parses as one at all -- an avatar (VRM, VRMC_vrm) in ANY part, an
         # animation (VRMC_vrm_animation, no avatar extension) NEVER, and a
         # plain glTF/GLB only when its declared part's kind is "character".
+        # AstraPlugins 4976d60: BEFORE any of that, every GLB (by magic) and
+        # every `.gltf`, in any part and of any class, is held to
+        # gltf_format_problem -- a duplicate JSON member, a chunk declared
+        # past EOF, or an external uri must never fall through to a lenient
+        # parse that calls the file "plain" (and so, in an animations part,
+        # never judges it at all).
         for entry in declared:
             path = entry.get("path") if isinstance(entry, dict) else None
             if not isinstance(path, str) or path not in parts_by_path:
@@ -883,11 +999,21 @@ def content_report(zip_path, declared):
                 parts_by_path[path]["gate"] = gate
                 continue
             raw = parts_by_path[path]["raw"]
+            is_glb = raw[:4] == b"glTF"
+            is_gltf_file = path.lower().endswith(".gltf")
+            if is_glb or is_gltf_file:
+                problem = gltf_format_problem(raw, path, present)
+                if problem is not None:
+                    parts_by_path[path]["gate"] = {
+                        "status": "format", "vrm_licence": None,
+                        "refusal": {"field": "format", "detail": problem},
+                    }
+                    continue
             doc = gltf_document(raw, path)
             if doc is not None:
                 cls = gltf_class(doc)
                 if cls == "avatar" or (cls == "plain" and entry.get("kind") == "character"):
-                    parts_by_path[path]["gate"] = vrm_gate(raw, path)
+                    parts_by_path[path]["gate"] = vrm_gate(raw, path, present)
 
         for info_dict in parts_by_path.values():
             info_dict.pop("raw", None)
@@ -911,6 +1037,7 @@ def content_report(zip_path, declared):
     licence_conflicts = []
     licence_unknown = []
     licence_undeclared = []
+    format_refusals = []
     for path in sorted(declared_set & content_set):
         info = parts_by_path[path]
         gate = info["gate"]
@@ -918,6 +1045,11 @@ def content_report(zip_path, declared):
         if gate_status == "conflict":
             # refused outright, before licence_source is even asked
             licence_conflicts.append({"path": path, "field": gate["refusal"]["field"], "detail": gate["refusal"]["detail"]})
+            continue
+        if gate_status == "format":
+            # AstraPlugins 4976d60: E_CONTENT_FORMAT, refused before
+            # licence_source is even asked -- same shape as a conflict.
+            format_refusals.append({"path": path, "detail": gate["refusal"]["detail"]})
             continue
         vrm_licence = gate["vrm_licence"] if gate and gate_status != "unknown" else None
         if gate_status == "refused":
@@ -947,6 +1079,7 @@ def content_report(zip_path, declared):
         "licence_conflicts": licence_conflicts,
         "licence_unknown": licence_unknown,
         "licence_undeclared": licence_undeclared,
+        "format_refusals": format_refusals,
         "gaps": gaps,
     }
 
