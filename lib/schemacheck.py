@@ -52,6 +52,7 @@ import struct
 import sys
 import tomllib
 import zipfile
+import zlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 VENDOR = HERE / "vendor" / "astraplugins"
@@ -356,6 +357,15 @@ CD_RECORD_FIXED_SIZE = 46
 LOCAL_HEADER_FIXED_SIZE = 30
 FLAG_DATA_DESCRIPTOR = 0x08
 ZIP_CHECK_CAP = 256 * 1024 * 1024
+ZIP_METHOD_STORED = 0
+ZIP_METHOD_DEFLATED = 8
+# PKWARE APPNOTE 4.6.9: "Info-ZIP Unicode Path Extra Field". Many readers
+# (including Python's own zipfile -- confirmed against astra-ce's
+# sec-probe vectors: ZipFile.namelist() returns THIS field's path, not the
+# header's own name) prefer it over the entry's declared name, which makes
+# it a second, independent name a central-directory-only parser (this
+# function) would never otherwise see. Refused outright, never read.
+UNICODE_PATH_EXTRA_TAG = 0x7075
 
 
 def _find_eocd(buf: bytes) -> int:
@@ -368,6 +378,73 @@ def _find_eocd(buf: bytes) -> int:
     if idx == -1:
         raise ValueError("no end-of-central-directory record")
     return idx
+
+
+def _extra_has_tag(extra: bytes, tag: int) -> bool:
+    """Walks a zip extra field's `{id:u16, size:u16, data}` sub-records for
+    `tag`. A malformed extra (a sub-record whose declared size runs past
+    what is left) simply ends the walk early -- validating the extra
+    field's own shape is not this function's job."""
+    pos = 0
+    while pos + 4 <= len(extra):
+        tag_id, size = struct.unpack_from("<HH", extra, pos)
+        if tag_id == tag:
+            return True
+        pos += 4 + size
+    return False
+
+
+def _verify_entry_data(buf: bytes, data_start: int, method: int, csize: int, usize: int, crc: int):
+    """Decodes an entry's own declared span, `buf[data_start:data_start +
+    csize]` (csize/usize/crc/method are always the CENTRAL DIRECTORY's --
+    the only trustworthy copy, data-descriptor entry or not), and confirms
+    it really is what it claims to be:
+      - Stored: compressed size must equal uncompressed size; nothing to
+        decode, so any other relationship can only be a lie.
+      - Deflated: raw-inflating (zlib, wbits=-15: no zlib/gzip wrapper)
+        must consume EXACTLY `csize` bytes and produce EXACTLY `usize`
+        bytes whose CRC-32 is `crc`. A real deflate bitstream carries its
+        own end-of-stream marker; if decoding it finishes before `csize`,
+        the remaining bytes are DEFLATE SLACK -- room INSIDE this entry's
+        own declared range that a correct decompressor never reads but a
+        streaming reader can, for a second local header a central-
+        directory-only parser's tiling check alone would never catch
+        (astra-ce sec-probe `slack.zip`: a bit-3 entry's data descriptor
+        agrees with the real, short deflate stream; only its central-
+        directory `compressed_size` is inflated to also cover a hidden
+        header). GIs come from arbitrary build tools that may legitimately
+        set the data-descriptor flag, so bit 3 itself is never refused --
+        only a stream that does not actually fill its declared span.
+    Any other method is refused outright: astra-companion's own character-
+    bundle zip core allows only Stored and Deflate (docs/character-files-
+    and-2d-editor.md §1.1), and silently accepting a method this function
+    cannot verify would be worse than saying so.
+    Returns None (consistent) or a reason string.
+    """
+    span = buf[data_start:data_start + csize]
+    if method == ZIP_METHOD_STORED:
+        if csize != usize:
+            return f"a Stored entry's compressed size {csize} does not equal its uncompressed size {usize}"
+        return None
+    if method == ZIP_METHOD_DEFLATED:
+        d = zlib.decompressobj(-15)
+        try:
+            out = d.decompress(span)
+        except zlib.error as e:
+            return f"its Deflate stream does not decode: {e}"
+        if not d.eof:
+            return f"its Deflate stream does not end within the declared compressed size {csize}"
+        if d.unused_data:
+            return (
+                f"its Deflate stream ends {len(d.unused_data)} byte(s) before the declared "
+                f"compressed size {csize} -- deflate slack inside the entry's own declared range"
+            )
+        if len(out) != usize:
+            return f"its Deflate stream decodes to {len(out)} byte(s), not the declared uncompressed size {usize}"
+        if zlib.crc32(out) != crc:
+            return f"its decoded bytes do not hash to its declared CRC-32 {crc:#010x}"
+        return None
+    return f"compression method {method} is neither Stored nor Deflate"
 
 
 def verify_zip_headers(zip_path) -> dict:
@@ -387,7 +464,20 @@ def verify_zip_headers(zip_path) -> dict:
         region before the central directory starts, with no gap and no
         overlap -- a gap is either leading junk (before the first entry)
         or room for a hidden local entry the central directory never
-        mentions (between two listed entries or after the last one).
+        mentions (between two listed entries or after the last one);
+      - an entry carries an Info-ZIP Unicode Path extra field (0x7075, in
+        either its local or central copy) -- a second name some readers
+        (Python's own zipfile included) honour over the one above, that a
+        central-directory-only parser would never otherwise see at all;
+      - an entry's own declared data does not decode to what it claims:
+        a Stored entry whose sizes disagree, or a Deflated entry whose
+        raw-inflated stream does not consume exactly its declared
+        compressed size and produce exactly its declared uncompressed
+        size and CRC-32 (`_verify_entry_data`) -- DEFLATE SLACK plus a
+        legitimate data-descriptor entry (bit 3, never refused on its own:
+        GIs come from arbitrary build tools that may set it) is exactly
+        the tiling check above cannot see, because the slack sits INSIDE
+        an entry's own declared range, not in a gap between entries.
     ZIP64 (a central directory whose own locator fields are the 0xFFFF /
     0xFFFFFFFF sentinel) is refused outright rather than half-verified:
     nothing this repository ingests needs it, and a checker that silently
@@ -421,6 +511,7 @@ def verify_zip_headers(zip_path) -> dict:
     pos = cd_offset
     cd_end = cd_offset + cd_size
     while pos < cd_end:
+        entry_start = pos
         if pos + CD_RECORD_FIXED_SIZE > len(buf):
             return {"ok": False, "error": f"a central directory entry at {pos} is truncated"}
         (
@@ -429,8 +520,11 @@ def verify_zip_headers(zip_path) -> dict:
         ) = struct.unpack_from("<IHHHHHHIIIHHHHHII", buf, pos)
         if csig != CENTRAL_DIR_SIG:
             return {"ok": False, "error": f"a central directory entry at {pos} has the wrong signature"}
-        name = bytes(buf[pos + CD_RECORD_FIXED_SIZE:pos + CD_RECORD_FIXED_SIZE + fn_len])
-        pos += CD_RECORD_FIXED_SIZE + fn_len + extra_len + cmt_len
+        name = bytes(buf[entry_start + CD_RECORD_FIXED_SIZE:entry_start + CD_RECORD_FIXED_SIZE + fn_len])
+        central_extra = bytes(
+            buf[entry_start + CD_RECORD_FIXED_SIZE + fn_len:entry_start + CD_RECORD_FIXED_SIZE + fn_len + extra_len]
+        )
+        pos = entry_start + CD_RECORD_FIXED_SIZE + fn_len + extra_len + cmt_len
 
         if lho + LOCAL_HEADER_FIXED_SIZE > len(buf):
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header offset {lho} is outside the file"}
@@ -440,9 +534,10 @@ def verify_zip_headers(zip_path) -> dict:
         if lsig != LOCAL_FILE_HEADER_SIG:
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header at {lho} has the wrong signature"}
         lname_start = lho + LOCAL_HEADER_FIXED_SIZE
-        if lname_start + lfn_len > len(buf):
-            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header name runs past the end of the file"}
+        if lname_start + lfn_len + lextra_len > len(buf):
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header name or extra field runs past the end of the file"}
         lname = bytes(buf[lname_start:lname_start + lfn_len])
+        local_extra = bytes(buf[lname_start + lfn_len:lname_start + lfn_len + lextra_len])
         if lname != name:
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: the central directory calls this entry {name!r}; its local header calls itself {lname!r}"}
         if lcomp != ccomp:
@@ -457,11 +552,20 @@ def verify_zip_headers(zip_path) -> dict:
                         f"central directory's (crc={ccrc},csize={ccsize},usize={cusize})"
                     ),
                 }
+        # Info-ZIP Unicode Path Extra Field: a second name, honoured by
+        # some readers (Python's own zipfile included) over the one
+        # above, that a central-directory-only parser would never
+        # otherwise see at all. Refused outright, in either copy.
+        if _extra_has_tag(central_extra, UNICODE_PATH_EXTRA_TAG) or _extra_has_tag(local_extra, UNICODE_PATH_EXTRA_TAG):
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r} carries a Unicode Path extra field (0x7075), which is never allowed"}
 
         data_start = lname_start + lfn_len + lextra_len
         data_end = data_start + ccsize  # the central directory's size is authoritative either way
         if data_end > len(buf):
             return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s data runs past the end of the file"}
+        bad = _verify_entry_data(buf, data_start, ccomp, ccsize, cusize, ccrc)
+        if bad:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}: {bad}"}
         ranges.append((lho, data_end, name))
 
     ranges.sort(key=lambda r: r[0])

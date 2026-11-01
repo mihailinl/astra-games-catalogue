@@ -14,14 +14,18 @@
 // exactly the one fact each test names.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { CODES } from "../lib/codes.mjs";
 import { checkContent } from "../lib/content.mjs";
 import { verifyZipHeaders } from "../lib/schemas.mjs";
 import { makeZipBytes, tmpdir } from "./helpers.mjs";
+
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "zip-cloaking");
 
 function writeZip(buf) {
   const p = path.join(tmpdir(), "astra-gi.zip");
@@ -120,4 +124,103 @@ test("checkContent refuses a cloaked release with E_ZIP_HEADERS_INCONSISTENT bef
   assert.deepEqual(r.content, []);
   assert.equal(r.findings.length, 1, JSON.stringify(r.findings));
   assert.equal(r.findings[0].code, CODES.E_ZIP_HEADERS_INCONSISTENT);
+});
+
+// ── astra-ce sec-probe: two more cloaking shapes verify_zip_headers first
+// missed, each with its own vector (fixtures/zip-cloaking/) and a mutation
+// that fixes the one fact the refusal cares about. ──────────────────────
+
+/** A minimal, hand-built single-entry STORED zip -- the same low-level
+ * shape astra-ce's sec-probe gen.py uses, built here (not vendored) so
+ * the mutation can flip exactly one fact against an otherwise identical
+ * structure. */
+function buildStoredZip({ name, data, extra = Buffer.alloc(0) }) {
+  const script = `
+import base64, json, struct, sys, zlib
+req = json.loads(sys.stdin.read())
+name = req["name"].encode()
+data = base64.b64decode(req["data"])
+extra = base64.b64decode(req["extra"])
+crc = zlib.crc32(data)
+def lfh(name, crc, sz, extra):
+    return struct.pack('<IHHHHHIIIHH', 0x04034b50, 20, 0, 0, 0, 0x21, crc, sz, sz, len(name), len(extra)) + name + extra
+def cdh(name, crc, sz, off, extra):
+    return struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 20, 20, 0, 0, 0, 0x21, crc, sz, sz, len(name), len(extra), 0, 0, 0, 0, off) + name + extra
+def eocd(n, cdsz, cdoff):
+    return struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, n, n, cdsz, cdoff, 0)
+l = lfh(name, crc, len(data), extra) + data
+cd = cdh(name, crc, len(data), 0, extra)
+sys.stdout.buffer.write(l + cd + eocd(1, len(cd), len(l)))
+`;
+  return execFileSync("python3", ["-c", script], {
+    input: JSON.stringify({ name, data: data.toString("base64"), extra: extra.toString("base64") }),
+  });
+}
+
+/** A minimal, hand-built single-entry Deflated zip using general-purpose
+ * flag bit 3 (data descriptor), with NO slack: the central directory's
+ * compressed_size is exactly the real deflate stream's own length. The
+ * legitimate counterpart to fixtures/zip-cloaking/slack.zip's attack. */
+function buildBit3DeflateZip({ name, data }) {
+  const script = `
+import base64, json, struct, sys, zlib
+req = json.loads(sys.stdin.read())
+name = req["name"].encode()
+raw = base64.b64decode(req["data"])
+co = zlib.compressobj(9, zlib.DEFLATED, -15)
+comp = co.compress(raw) + co.flush()
+crc = zlib.crc32(raw)
+def lfh(name, flags, csz, usz):
+    return struct.pack('<IHHHHHIIIHH', 0x04034b50, 20, flags, 8, 0, 0x21, 0, csz, usz, len(name), 0) + name
+def cdh(name, flags, crc, csz, usz, off):
+    return struct.pack('<IHHHHHHIIIHHHHHII', 0x02014b50, 20, 20, flags, 8, 0, 0x21, crc, csz, usz, len(name), 0, 0, 0, 0, 0, off) + name
+def eocd(n, cdsz, cdoff):
+    return struct.pack('<IHHHHIIH', 0x06054b50, 0, 0, n, n, cdsz, cdoff, 0)
+l = lfh(name, 0x08, 0, 0) + comp
+cd = cdh(name, 0x08, crc, len(comp), len(raw), 0)
+sys.stdout.buffer.write(l + cd + eocd(1, len(cd), len(l)))
+`;
+  return execFileSync("python3", ["-c", script], { input: JSON.stringify({ name, data: data.toString("base64") }) });
+}
+
+test("Zip Cloaking vector (slack.zip): deflate slack behind a data-descriptor entry hides a second local header", () => {
+  const r = verifyZipHeaders(path.join(FIXTURES, "slack.zip"));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /E_ZIP_HEADERS_INCONSISTENT/);
+  assert.match(r.error, /deflate slack/);
+  // Confirm the shape really does fool a central-directory-only reader --
+  // the hidden "readme.txt" local header, physically inside a.txt's
+  // declared range, is never in zipfile's own namelist().
+  const names = JSON.parse(
+    execFileSync("python3", ["-c", "import zipfile,sys,json; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", path.join(FIXTURES, "slack.zip")]),
+  );
+  assert.deepEqual(names.sort(), ["a.txt", "launch.sh"]);
+});
+
+test("mutation: a bit-3 Deflated entry with no slack (compressed_size matches the real stream) passes", () => {
+  // Same shape as the vector -- Deflated, data-descriptor flag set -- with
+  // the ONE fact fixed: the central directory's compressed_size is
+  // exactly the real deflate stream's length, no slack appended after it.
+  const zipPath = writeZip(buildBit3DeflateZip({ name: "a.txt", data: Buffer.from("hello world\n".repeat(20)) }));
+  assert.deepEqual(verifyZipHeaders(zipPath), { ok: true });
+});
+
+test("Zip Cloaking vector (upath.zip): an Info-ZIP Unicode Path extra field is refused", () => {
+  const r = verifyZipHeaders(path.join(FIXTURES, "upath.zip"));
+  assert.equal(r.ok, false);
+  assert.match(r.error, /E_ZIP_HEADERS_INCONSISTENT/);
+  assert.match(r.error, /Unicode Path/);
+  // Confirm the shape really does fool a reader that honours the field --
+  // Python's own zipfile returns the extra field's path, not the header's.
+  const names = JSON.parse(
+    execFileSync("python3", ["-c", "import zipfile,sys,json; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))", path.join(FIXTURES, "upath.zip")]),
+  );
+  assert.deepEqual(names, ["launch.sh"]);
+});
+
+test("mutation: the same entry with no Unicode Path extra field passes", () => {
+  // Same name and data as the vector's own header ("notes.txt" / 7 bytes
+  // of payload) -- the ONE fact fixed is the absent extra field.
+  const zipPath = writeZip(buildStoredZip({ name: "notes.txt", data: Buffer.from("payload") }));
+  assert.deepEqual(verifyZipHeaders(zipPath), { ok: true });
 });
