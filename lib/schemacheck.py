@@ -18,6 +18,8 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
             "licence_refusals": [...], "licence_unknown": [...],
             "licence_undeclared": [...], "gaps": [...]}
          | {"ok": false, "error": "..."}
+    python3 lib/schemacheck.py zipcheck ZIP
+        -> {"ok": true} | {"ok": false, "error": "..."}   (Zip Cloaking, see verify_zip_headers)
 
 `manifest` reads astra-gi.toml from the root of a release zip with
 `tomllib`, the same parser AstraPlugins' check-games-goldens.py uses. It reads
@@ -46,6 +48,7 @@ import hashlib
 import io
 import json
 import pathlib
+import struct
 import sys
 import tomllib
 import zipfile
@@ -335,10 +338,163 @@ def read_astrachar_body_vrm(outer_zip, entry_name):
         return None, f"astrachar_unreadable: {type(e).__name__}"
 
 
+# ── Zip Cloaking ─────────────────────────────────────────────────────────
+# A crafted zip whose LOCAL file headers disagree with its CENTRAL
+# DIRECTORY lets a validator and an extractor see two different archives.
+# Python's `zipfile` (and every other reader this process or gi-probe
+# uses) reads the CENTRAL DIRECTORY; a hidden local entry the central
+# directory does not list is invisible to it but very visible to a naive
+# sequential unzip. Ingest must see the same single archive the launcher
+# will (gi-probe, lane L, refuses the same thing), so this runs before any
+# content-typed classification even starts.
+
+LOCAL_FILE_HEADER_SIG = 0x04034B50
+CENTRAL_DIR_SIG = 0x02014B50
+EOCD_SIG = 0x06054B50
+EOCD_FIXED_SIZE = 22  # signature through comment length, before the comment itself
+CD_RECORD_FIXED_SIZE = 46
+LOCAL_HEADER_FIXED_SIZE = 30
+FLAG_DATA_DESCRIPTOR = 0x08
+ZIP_CHECK_CAP = 256 * 1024 * 1024
+
+
+def _find_eocd(buf: bytes) -> int:
+    """The End Of Central Directory record's own offset, searched from the
+    tail: a zip's trailing comment (up to 65535 bytes) can push it back
+    from EOF, so this is not simply `len(buf) - 22`."""
+    sig = struct.pack("<I", EOCD_SIG)
+    lo = max(0, len(buf) - EOCD_FIXED_SIZE - 65535)
+    idx = buf.rfind(sig, lo)
+    if idx == -1:
+        raise ValueError("no end-of-central-directory record")
+    return idx
+
+
+def verify_zip_headers(zip_path) -> dict:
+    """
+    Refuses `E_ZIP_HEADERS_INCONSISTENT` when:
+      - a local header's signature is wrong;
+      - a local header's name, compression method, CRC or either size
+        disagrees with its central-directory record (a data-descriptor
+        entry -- general-purpose flag bit 3 -- carries no reliable crc or
+        sizes in its OWN local header by design, so those three fields are
+        never compared for one: the central directory is their only
+        trustworthy copy);
+      - a local header sits outside the file, or its declared byte range
+        (header + the central directory's compressed size for it)
+        overlaps another entry's;
+      - the central-directory-listed entries do not exactly TILE the
+        region before the central directory starts, with no gap and no
+        overlap -- a gap is either leading junk (before the first entry)
+        or room for a hidden local entry the central directory never
+        mentions (between two listed entries or after the last one).
+    ZIP64 (a central directory whose own locator fields are the 0xFFFF /
+    0xFFFFFFFF sentinel) is refused outright rather than half-verified:
+    nothing this repository ingests needs it, and a checker that silently
+    skipped the fields it does not understand would be worse than one that
+    says so.
+    Returns {"ok": True} or {"ok": False, "error": "..."}.
+    """
+    try:
+        size = pathlib.Path(zip_path).stat().st_size
+        if size > ZIP_CHECK_CAP:
+            return {"ok": False, "error": f"{zip_path} is {size} bytes, over {ZIP_CHECK_CAP}"}
+        with open(zip_path, "rb") as f:
+            buf = f.read()
+    except OSError as e:
+        return {"ok": False, "error": f"cannot read {zip_path}: {e}"}
+
+    try:
+        eocd = _find_eocd(buf)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    _disk_no, _cd_disk_no, _disk_entries, total_entries, cd_size, cd_offset, _comment_len = (
+        struct.unpack_from("<HHHHIIH", buf, eocd + 4)
+    )
+    if total_entries == 0xFFFF or cd_size == 0xFFFFFFFF or cd_offset == 0xFFFFFFFF:
+        return {"ok": False, "error": "ZIP64 central directory is not supported by this check"}
+    if cd_offset + cd_size > len(buf):
+        return {"ok": False, "error": "the central directory extends past the end of the file"}
+
+    ranges = []  # (local_header_offset, data_end, name)
+    pos = cd_offset
+    cd_end = cd_offset + cd_size
+    while pos < cd_end:
+        if pos + CD_RECORD_FIXED_SIZE > len(buf):
+            return {"ok": False, "error": f"a central directory entry at {pos} is truncated"}
+        (
+            csig, _vmb, _vn, _cflags, ccomp, _mtime, _mdate, ccrc, ccsize, cusize,
+            fn_len, extra_len, cmt_len, _disk_start, _int_attrs, _ext_attrs, lho,
+        ) = struct.unpack_from("<IHHHHHHIIIHHHHHII", buf, pos)
+        if csig != CENTRAL_DIR_SIG:
+            return {"ok": False, "error": f"a central directory entry at {pos} has the wrong signature"}
+        name = bytes(buf[pos + CD_RECORD_FIXED_SIZE:pos + CD_RECORD_FIXED_SIZE + fn_len])
+        pos += CD_RECORD_FIXED_SIZE + fn_len + extra_len + cmt_len
+
+        if lho + LOCAL_HEADER_FIXED_SIZE > len(buf):
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header offset {lho} is outside the file"}
+        lsig, _lvn, lflags, lcomp, _lmtime, _lmdate, lcrc, lcsize, lusize, lfn_len, lextra_len = (
+            struct.unpack_from("<IHHHHHIIIHH", buf, lho)
+        )
+        if lsig != LOCAL_FILE_HEADER_SIG:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header at {lho} has the wrong signature"}
+        lname_start = lho + LOCAL_HEADER_FIXED_SIZE
+        if lname_start + lfn_len > len(buf):
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header name runs past the end of the file"}
+        lname = bytes(buf[lname_start:lname_start + lfn_len])
+        if lname != name:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: the central directory calls this entry {name!r}; its local header calls itself {lname!r}"}
+        if lcomp != ccomp:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local compression method {lcomp} disagrees with the central directory's {ccomp}"}
+        if not (lflags & FLAG_DATA_DESCRIPTOR):
+            if lcrc != ccrc or lcsize != ccsize or lusize != cusize:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s local header "
+                        f"(crc={lcrc},csize={lcsize},usize={lusize}) disagrees with the "
+                        f"central directory's (crc={ccrc},csize={ccsize},usize={cusize})"
+                    ),
+                }
+
+        data_start = lname_start + lfn_len + lextra_len
+        data_end = data_start + ccsize  # the central directory's size is authoritative either way
+        if data_end > len(buf):
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r}'s data runs past the end of the file"}
+        ranges.append((lho, data_end, name))
+
+    ranges.sort(key=lambda r: r[0])
+    cursor = 0
+    for start, end, name in ranges:
+        if start < cursor:
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {name!r} at {start} overlaps the previous entry, which runs to {cursor}"}
+        if start > cursor:
+            where = "before the first entry" if cursor == 0 else f"before {name!r}"
+            return {"ok": False, "error": f"E_ZIP_HEADERS_INCONSISTENT: {start - cursor} undeclared byte(s) {where}, at offset {cursor} -- a hidden local entry could sit there"}
+        cursor = end
+    if cursor != cd_offset:
+        return {
+            "ok": False,
+            "error": (
+                f"E_ZIP_HEADERS_INCONSISTENT: {cd_offset - cursor} undeclared byte(s) between the last "
+                f"listed entry (ending at {cursor}) and the central directory (starting at {cd_offset})"
+            ),
+        }
+
+    return {"ok": True}
+
+
 def content_report(zip_path, declared):
     """AstraPlugins manifest.md §2.7: the content-coverage check and the HARD
     VRM licence gate, over a real release zip. `declared` is the parsed
-    manifest's `[[integration.content]]` array (a list of dicts)."""
+    manifest's `[[integration.content]]` array (a list of dicts). Runs
+    verify_zip_headers FIRST (Zip Cloaking): a release whose local headers
+    disagree with its own central directory is refused before anything is
+    classified as content at all."""
+    zh = verify_zip_headers(zip_path)
+    if not zh["ok"]:
+        return {"ok": False, "error": zh["error"]}
     try:
         z = zipfile.ZipFile(zip_path)
     except (zipfile.BadZipFile, OSError) as e:
@@ -460,6 +616,9 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "content":
         req = json.load(sys.stdin)
         json.dump(content_report(argv[2], req.get("declared", [])), sys.stdout, ensure_ascii=False)
+        return 0
+    if len(argv) == 3 and argv[1] == "zipcheck":
+        json.dump(verify_zip_headers(argv[2]), sys.stdout, ensure_ascii=False)
         return 0
     sys.stderr.write(__doc__)
     return 2
