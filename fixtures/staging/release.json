@@ -1,0 +1,10 @@
+{
+  "tag_name": "v1.0.0",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-10-31T12:00:00Z",
+  "body": "First staging release of the C# test integration.",
+  "assets": [
+    { "name": "astra-gi.zip", "size": 0, "digest": "sha256:__SHA256__" }
+  ]
+}

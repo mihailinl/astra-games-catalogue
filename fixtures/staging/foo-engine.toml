@@ -1,0 +1,34 @@
+# The staging foo-engine foundation: owns the new engine code "foo-engine"
+# (merged plan §3.2 lane C, "Done when").
+schema = 1
+
+[integration]
+id = "astra-staging-author.foo-engine"
+name = "Foo Engine support"
+version = "0.1.0"
+authors = ["astra-staging-author"]
+license = "MIT"
+repo = "https://github.com/astra-staging-author/staging-foo-engine"
+
+[integration.engine]
+schema = "astra.engine/1"
+engine = { codes = { foo-engine = "Foo Engine" } }
+
+[[integration.engine.rule]]
+tier = "strong"
+programs = { ext = ["exe"], at = "{project}", first = 8 }
+require = [ { listed = "foo_runtime.dll", kind = "file" } ]
+code = "foo-engine"
+confidence = "high"
+binary = "windows"
+evidence = "{project}"
+
+[target]
+engine = "foo-engine"
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"
+
+[[files]]
+from = "**"
+to = "${profile}/"

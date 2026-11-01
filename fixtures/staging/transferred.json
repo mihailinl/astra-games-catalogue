@@ -1,0 +1,15 @@
+{
+  "$comment": "The staging repository after a transfer to another owner: same repository_id, new owner id, and an honest certificate built under the new owner. The binding says 800000001, so ingest HOLDS it (R_IDENTITY_CHANGED) for a person; it never lists it and never refuses it.",
+  "owner": {
+    "id": 800000002,
+    "login": "someone-else"
+  },
+  "certificate": {
+    "sourceRepositoryOwnerIdentifier": "800000002",
+    "sourceRepositoryURI": "https://github.com/someone-else/staging-csharp-gi",
+    "buildSignerURI": "https://github.com/someone-else/staging-csharp-gi/.github/workflows/gi-release.yml@refs/tags/v1.0.0",
+    "runInvocationURI": "https://github.com/someone-else/staging-csharp-gi/actions/runs/1234567891/attempts/1"
+  },
+  "full_name": "someone-else/staging-csharp-gi",
+  "expect": "hold"
+}

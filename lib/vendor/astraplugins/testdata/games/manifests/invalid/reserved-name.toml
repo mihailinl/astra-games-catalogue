@@ -1,0 +1,18 @@
+# VENDORED from mihailinl/AstraPlugins at d46e44a089387589018f28cfc3403399f7c3b89d, path testdata/games/manifests/invalid/reserved-name.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# Invalid: reserved-name. integration.name contains "Official"
+# (reserved.yaml integration_name_reserved_substrings), confusable-folded.
+schema = 1
+
+[integration]
+id = "someone.cool-mod"
+name = "Official Astra Companion"
+version = "0.1.0"
+license = "MIT"
+
+[target]
+steam_appid = 1966720
+exe = "Lethal Company.exe"
+platforms = ["windows-x64"]
+anti_cheat = "none"

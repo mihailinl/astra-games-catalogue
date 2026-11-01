@@ -1,0 +1,8 @@
+{
+  "id": 900000001,
+  "full_name": "astra-staging-author/staging-csharp-gi",
+  "owner": { "id": 800000001, "login": "astra-staging-author" },
+  "private": false,
+  "visibility": "public",
+  "default_branch": "main"
+}

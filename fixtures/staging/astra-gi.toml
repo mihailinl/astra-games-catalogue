@@ -1,0 +1,25 @@
+# The staging C# test integration (merged plan §3.2 lane C, "Done when").
+schema = 1
+
+[integration]
+id = "astra-staging-author.staging-csharp-gi"
+name = "Staging C# test integration"
+version = "1.0.0"
+authors = ["astra-staging-author"]
+license = "MIT"
+repo = "https://github.com/astra-staging-author/staging-csharp-gi"
+
+[integration.foundation]
+id = "astra.unity"
+version = "0.8.1"
+engine = "unity-mono"
+
+[target]
+steam_appid = 4000001
+exe = "StagingGame.exe"
+platforms = ["windows-x64", "linux-proton"]
+anti_cheat = "none"
+
+[[files]]
+from = "BepInEx/plugins/**"
+to = "${profile}/BepInEx/plugins/"

@@ -1,0 +1,6 @@
+{
+  "4000001": { "success": true, "data": { "type": "game", "name": "Staging Game", "categories": [ { "id": 2, "description": "Single-player" } ], "genres": [ { "id": "1", "description": "Action" } ] } },
+  "4000002": { "success": true, "data": { "type": "game", "name": "Staging VAC Game", "categories": [ { "id": 8, "description": "Valve Anti-Cheat enabled" } ] } },
+  "4000003": { "success": true, "data": { "type": "game", "name": "Staging Arena", "categories": [ { "id": 36, "description": "Online PvP" } ] } },
+  "4000009": { "success": false }
+}

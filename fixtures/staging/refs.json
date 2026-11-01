@@ -1,0 +1,5 @@
+{
+  "$comment": "v1.0.0 is an ANNOTATED tag: its ref points at a tag object, which peels to the commit. Ingest must compare .13 with the commit, never with the tag object.",
+  "ref": { "ref": "refs/tags/v1.0.0", "object": { "type": "tag", "sha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" } },
+  "tag_object": { "sha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "object": { "type": "commit", "sha": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00" } }
+}

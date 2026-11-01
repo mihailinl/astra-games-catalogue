@@ -1,0 +1,9 @@
+{
+  "$comment": "A§11 S1b: every certificate field of A§4.1 refuses on a staging fixture. Each variant overrides certificate keys of attestation.json; `expect` is the code ingest must return. The transferred repository is a different case (the repository's owner moved, the certificate is honest) and is a hold, in transferred.json.",
+  "self-hosted-runner": { "certificate": { "runnerEnvironment": "self-hosted" }, "expect": "E_ATTESTATION_INVALID" },
+  "workflow-dispatch": { "certificate": { "buildTrigger": "workflow_dispatch" }, "expect": "E_ATTESTATION_INVALID" },
+  "branch-ref": { "certificate": { "sourceRepositoryRef": "refs/heads/main" }, "expect": "E_ATTESTATION_INVALID" },
+  "wrong-sha": { "certificate": { "sourceRepositoryDigest": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" }, "expect": "E_ATTESTATION_SHA_MISMATCH" },
+  "wrong-owner-id": { "certificate": { "sourceRepositoryOwnerIdentifier": "800000099" }, "expect": "E_ATTESTATION_OWNER_MISMATCH" },
+  "wrong-repository-id": { "certificate": { "sourceRepositoryIdentifier": "900000099" }, "expect": "E_ATTESTATION_ID_MISMATCH" }
+}

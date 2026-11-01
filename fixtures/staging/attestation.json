@@ -1,0 +1,26 @@
+[
+  {
+    "$comment": "gh attestation verify --format json, the shape gh 2.100.0 prints (registry B-T1.2 survey). __SHA256__ is the asset digest, filled by the test.",
+    "verificationResult": {
+      "statement": {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [ { "name": "astra-gi.zip", "digest": { "sha256": "__SHA256__" } } ],
+        "predicateType": "https://slsa.dev/provenance/v1"
+      },
+      "signature": {
+        "certificate": {
+          "buildSignerURI": "https://github.com/astra-staging-author/staging-csharp-gi/.github/workflows/gi-release.yml@refs/tags/v1.0.0",
+          "buildSignerDigest": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00",
+          "runnerEnvironment": "github-hosted",
+          "sourceRepositoryURI": "https://github.com/astra-staging-author/staging-csharp-gi",
+          "sourceRepositoryDigest": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00",
+          "sourceRepositoryRef": "refs/tags/v1.0.0",
+          "sourceRepositoryIdentifier": "900000001",
+          "sourceRepositoryOwnerIdentifier": "800000001",
+          "buildTrigger": "push",
+          "runInvocationURI": "https://github.com/astra-staging-author/staging-csharp-gi/actions/runs/1234567890/attempts/1"
+        }
+      }
+    }
+  }
+]
