@@ -38,7 +38,9 @@ extension/magic table and the same GLB-chunk/VRM-meta logic are implemented
 independently in AstraPlugins' tools/check-games-goldens.py, both pinned
 against testdata/games/content/ (manifest.md §4's exception note) -- this is
 NOT a vendored copy of that file, because one reads a real zip and the other
-a loose directory.
+a loose directory. Both read BOTH VRM metas of a file that carries a 0.x and
+a 1.0 block, and refuse a disagreement E_CONTENT_LICENCE_CONFLICT (O-2,
+AstraPlugins 4de2e30); fixtures/vrm-conflict/ holds that commit's goldens.
 """
 
 from __future__ import annotations
@@ -214,24 +216,30 @@ def parse_glb_json_chunk(raw):
         return None
 
 
-def extract_vrm_meta(raw):
-    """(vrm_version, meta_dict) from extensions.VRM.meta / extensions.
-    VRMC_vrm.meta, or None when the GLB carries neither -- legal
-    DRAFT-v3.md Part 6 G4's "unknown" case (flagged, never refused: not
-    every .vrm file carries a meta block)."""
+def extract_vrm_metas(raw):
+    """{"0.x": meta_dict, "1.0": meta_dict} for WHICHEVER of
+    extensions.VRM.meta / extensions.VRMC_vrm.meta the GLB carries -- both,
+    when it carries both, never only the first one found (O-2: the earlier
+    `extract_vrm_meta` returned on the first match, so a file whose VRM 0.x
+    meta allowed and whose VRM 1.0 meta prohibited passed the gate
+    outright). Empty when it carries neither -- legal DRAFT-v3.md Part 6
+    G4's "unknown" case (flagged, never refused: not every .vrm file
+    carries a meta block). Mirrors AstraPlugins tools/check-games-goldens.py
+    at 4de2e30 (spec/games-vrm-conflict-kindkeys)."""
     doc = parse_glb_json_chunk(raw)
     if not isinstance(doc, dict):
-        return None
+        return {}
     exts = doc.get("extensions")
     if not isinstance(exts, dict):
-        return None
+        return {}
+    out = {}
     vrm0 = exts.get("VRM")
     if isinstance(vrm0, dict) and isinstance(vrm0.get("meta"), dict):
-        return "0.x", vrm0["meta"]
+        out["0.x"] = vrm0["meta"]
     vrm1 = exts.get("VRMC_vrm")
     if isinstance(vrm1, dict) and isinstance(vrm1.get("meta"), dict):
-        return "1.0", vrm1["meta"]
-    return None
+        out["1.0"] = vrm1["meta"]
+    return out
 
 
 def rule_vrm_licence_refused(vrm_version, meta):
@@ -288,17 +296,66 @@ VRM_USAGE_FIELDS = {
 }
 
 
+# The overlap between the two specs' usage-flag vocabularies: 0.x's
+# *UssageName string enum ("Allow" vs anything else -- UniVRM) against 1.0's
+# allowExcessively*Usage boolean. 0.x's `commercialUssageName` and 1.0's
+# `allowPoliticalOrReligiousUsage` / `allowAntisocialOrHateUsage` have no
+# counterpart on the other side and are never compared.
+VRM_USAGE_OVERLAP = {
+    "violent": ("violentUssageName", "allowExcessivelyViolentUsage"),
+    "sexual": ("sexualUssageName", "allowExcessivelySexualUsage"),
+}
+
+
+def rule_vrm_conflict(meta0x, meta1_0):
+    """manifest.md §2.7.3 (AstraPlugins 4de2e30) / the content contract's
+    ingest-v1.md §4.2: a file carrying BOTH a VRM 0.x and a VRM 1.0 meta is
+    judged on EACH, each with its own spec's absent-field defaults, and a
+    disagreement is E_CONTENT_LICENCE_CONFLICT:
+
+      - the two gate verdicts differ (one side's redistribution or avatar
+        permission refuses and the other's does not), or
+      - an overlapping usage flag BOTH sides carry reads a different
+        allow/disallow between the two specs.
+
+    Returns {"field", "detail"} or None when they do not disagree."""
+    v0 = rule_vrm_licence_refused("0.x", meta0x)
+    v1 = rule_vrm_licence_refused("1.0", meta1_0)
+    if v0["refused"] != v1["refused"]:
+        def side(v):
+            return f"refused ({v['field']})" if v["refused"] else "allowed"
+        return {"field": "gate verdict", "detail": f"VRM 0.x reads {side(v0)}; VRM 1.0 reads {side(v1)}"}
+    for label, (key0, key1) in VRM_USAGE_OVERLAP.items():
+        if key0 in meta0x and key1 in meta1_0:
+            allowed0 = meta0x[key0] == "Allow"
+            allowed1 = meta1_0[key1] is True
+            if allowed0 != allowed1:
+                return {"field": f"usage:{label}", "detail": f"VRM 0.x {key0}={meta0x[key0]!r}; VRM 1.0 {key1}={meta1_0[key1]!r}"}
+    return None
+
+
 def vrm_gate(raw):
     """The full G4/G5 verdict for one .vrm's (or a readable .astrachar
-    body's) bytes. Returns {"status": "ok"|"refused"|"unknown",
-    "vrm_licence": {"vrm_version","fields"}|None, "refusal": {...}|None}.
-    "unknown" is never a refusal: G4 says it is flagged
-    (F_CONTENT_VRM_META_UNKNOWN) and passes only with the character
-    checkbox and the licence line, which is the publish form's job."""
-    extracted = extract_vrm_meta(raw)
-    if extracted is None:
+    body's) bytes, reading BOTH metas when the GLB carries both (O-2).
+    Returns {"status": "ok"|"refused"|"conflict"|"unknown", "vrm_licence":
+    {"vrm_version","fields"}|None, "refusal": {...}|None}.
+    "unknown" (no meta of either spec) is never a refusal: G4 says it is
+    flagged (F_CONTENT_VRM_META_UNKNOWN) and passes only with the character
+    checkbox and the licence line, which is the publish form's job.
+    "conflict" (rule_vrm_conflict) runs before any single-meta verdict and
+    carries no vrm_licence: the part is refused before display is asked."""
+    metas = extract_vrm_metas(raw)
+    if not metas:
         return {"status": "unknown", "vrm_licence": None, "refusal": None}
-    vrm_version, meta = extracted
+    if "0.x" in metas and "1.0" in metas:
+        conflict = rule_vrm_conflict(metas["0.x"], metas["1.0"])
+        if conflict is not None:
+            return {"status": "conflict", "vrm_licence": None, "refusal": conflict}
+    # Both present and agreeing, or only one: VRM 1.0 takes display
+    # precedence when both exist (astra-companion's `licence_of`: "a file
+    # carrying both is read as 1.0").
+    vrm_version = "1.0" if "1.0" in metas else "0.x"
+    meta = metas[vrm_version]
     verdict = rule_vrm_licence_refused(vrm_version, meta)
     fields = {k: meta[k] for k in VRM_GATE_FIELDS[vrm_version] + VRM_USAGE_FIELDS[vrm_version] if k in meta}
     vrm_licence = {"vrm_version": vrm_version, "fields": fields}
@@ -782,12 +839,17 @@ def content_report(zip_path, declared):
     declared_by_path = {e["path"]: e for e in declared if isinstance(e, dict) and isinstance(e.get("path"), str)}
     parts = []
     licence_refusals = []
+    licence_conflicts = []
     licence_unknown = []
     licence_undeclared = []
     for path in sorted(declared_set & content_set):
         info = parts_by_path[path]
         gate = info["gate"]
         gate_status = gate["status"] if gate else None
+        if gate_status == "conflict":
+            # refused outright, before licence_source is even asked
+            licence_conflicts.append({"path": path, "field": gate["refusal"]["field"], "detail": gate["refusal"]["detail"]})
+            continue
         vrm_licence = gate["vrm_licence"] if gate and gate_status != "unknown" else None
         if gate_status == "refused":
             licence_refusals.append({"path": path, "field": gate["refusal"]["field"], "value": gate["refusal"]["value"]})
@@ -813,6 +875,7 @@ def content_report(zip_path, declared):
         "duplicates": duplicates,
         "parts": parts,
         "licence_refusals": licence_refusals,
+        "licence_conflicts": licence_conflicts,
         "licence_unknown": licence_unknown,
         "licence_undeclared": licence_undeclared,
         "gaps": gaps,

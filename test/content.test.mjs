@@ -15,7 +15,7 @@ import { test } from "node:test";
 
 import { CODES } from "../lib/codes.mjs";
 import { checkContent } from "../lib/content.mjs";
-import { makeGlb, makeZipBytes, tmpdir } from "./helpers.mjs";
+import { ROOT, makeGlb, makeZipBytes, tmpdir } from "./helpers.mjs";
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
 const OGG = Buffer.from("OggS" + "\x00".repeat(8), "latin1");
@@ -242,4 +242,52 @@ test("no [[integration.content]] table at all is not itself a problem", () => {
   const r = checkContent({ zipPath, manifest: { integration: {} } });
   assert.deepEqual(r.findings, []);
   assert.deepEqual(r.content, []);
+});
+
+// ── O-2: a VRM carrying both metas is judged on both ────────────────────
+
+const VRM_FIXTURES = path.join(ROOT, "fixtures", "vrm-conflict");
+const DISAGREE = fs.readFileSync(path.join(VRM_FIXTURES, "vrm-metas-disagree.vrm"));
+const AGREE = fs.readFileSync(path.join(VRM_FIXTURES, "vrm-metas-agree.vrm"));
+
+test("E_CONTENT_LICENCE_CONFLICT: a 0.x meta that allows beside a 1.0 meta that prohibits is refused, never read by the first meta", () => {
+  const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+  const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": DISAGREE }), manifest });
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_CONFLICT);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.equal(f.path, "character/avatar.vrm");
+  assert.equal(f.field, "gate verdict");
+  assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_UNDECLARED), "a conflict is refused before licence_source is asked");
+  assert.deepEqual(r.content, [], "a conflicting part is never listed");
+});
+
+test("both metas present and agreeing pass, shown as the VRM 1.0 side", () => {
+  const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+  const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": AGREE }), manifest });
+  assert.deepEqual(codesOf(r).filter((c) => c.startsWith("E_")), [], JSON.stringify(r.findings));
+  assert.equal(r.content.length, 1);
+  assert.equal(r.content[0].vrm_licence.vrm_version, "1.0");
+  assert.equal(r.content[0].licence_source, "vrm");
+});
+
+test("E_CONTENT_LICENCE_CONFLICT: both allow redistribution, and an overlapping usage flag disagrees", () => {
+  const both = (violent0, violent1) => makeGlb({ extensions: {
+    VRM: { meta: { licenseName: "Redistribution_Allowed", allowedUserName: "Everyone", violentUssageName: violent0 } },
+    VRMC_vrm: { meta: { allowRedistribution: true, avatarPermission: "everyone", allowExcessivelyViolentUsage: violent1 } },
+  } });
+  const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+  const bad = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": both("Allow", false) }), manifest });
+  assert.equal(bad.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_CONFLICT)?.field, "usage:violent", JSON.stringify(bad.findings));
+  const good = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": both("Disallow", false) }), manifest });
+  assert.ok(!codesOf(good).includes(CODES.E_CONTENT_LICENCE_CONFLICT), JSON.stringify(good.findings));
+});
+
+test(".astrachar: a body carrying disagreeing metas is a conflict too", () => {
+  const inner = makeZipBytes({
+    "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
+    "models/Mira.vrm": DISAGREE,
+  });
+  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
+  const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner }), manifest });
+  assert.equal(r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_CONFLICT)?.path, "character/Mira.astrachar", JSON.stringify(r.findings));
 });
