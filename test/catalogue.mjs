@@ -153,6 +153,8 @@ export function candidate(o = {}) {
 }
 
 /** An act as the site sends it after the moderator's console 2FA. */
+let nextRef = 1;
 export function act(type, payload = {}, at = T0) {
-  return { schema: "astra.games.act/1", type, at, by: { account: "a-moderator" }, confirmation: { kind: "console-2fa", ref: `c-${type}-${at}` }, ...payload };
+  // every act is its own confirmation, as the service's act_id makes it
+  return { schema: "astra.games.act/1", type, at, by: { account: "mod-1" }, confirmation: { kind: "console-2fa", ref: `act-${nextRef++}` }, ...payload };
 }

@@ -218,3 +218,38 @@ test("M_MARK_SOURCE_REVIEWED labels only the bytes that were read", () => {
   const other = c.dist("games-index.json").signed.entries.find((x) => x.id === "first/foo");
   assert.equal(other.review, "unchecked");
 });
+
+// ── one act, once (lane C design §1.9 item 4) ───────────────────────────
+
+test("a re-served act (same confirmation ref) is answered applied with its first seq, and is not applied twice", () => {
+  const c = seeded();
+  const yank = ACTS.M_YANK();
+  const first = c.sign({ acts: [yank] });
+  assert.equal(first.acts.length, 1);
+  const seq = first.acts[0].seq;
+  const rows = c.state("withdrawn.json").rows.length;
+  const again = c.sign({ acts: [structuredClone(yank)] });
+  assert.deepEqual(again.acts, [], "nothing applied the second time");
+  assert.deepEqual(again.duplicateActs, [{ ref: yank.confirmation.ref, type: "M_YANK", seq }]);
+  assert.deepEqual(again.refusedActs, [], "a duplicate is not a refusal and does not fail the run");
+  assert.equal(c.state("withdrawn.json").rows.length, rows, "no second withdrawn row");
+  assert.equal(fs.readdirSync(path.join(c.data, "acts")).length, 1, "one record per act");
+});
+
+test("the same confirmation ref twice in one run is applied once; the second answers with the first's seq", () => {
+  const c = seeded();
+  const hold = ACTS.M_RELEASE_HOLD();
+  const r = c.sign({ acts: [hold, structuredClone(hold)] });
+  assert.equal(r.acts.length, 1);
+  assert.deepEqual(r.duplicateActs, [{ ref: hold.confirmation.ref, type: "M_RELEASE_HOLD", seq: r.acts[0].seq }]);
+  assert.deepEqual(r.refusedActs, [], "the second M_RELEASE_HOLD is not refused for a hold the first already released");
+});
+
+test("a refused act carries its confirmation ref, so the service can say which act failed", () => {
+  const c = seeded();
+  const bad = act("M_PROMOTE", { entry_id: "nobody/nothing", version: "9.9.9" });
+  const r = c.sign({ acts: [bad] });
+  assert.equal(r.refusedActs.length, 1);
+  assert.equal(r.refusedActs[0].ref, bad.confirmation.ref);
+  assert.equal(r.refusedActs[0].type, "M_PROMOTE");
+});
