@@ -229,7 +229,7 @@ test("a release with its content part present and declared carries content[] end
     "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
     "art/cover.png": CONTENT_PNG,
   });
-  const c = await run({ zip, request: { ...REQUEST, confirmed: [{ path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "rights-art", text_version: 1 }] } });
+  const c = await run({ zip, request: { ...REQUEST, confirmed: [{ path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "market.rights.art", text_version: 1 }] } });
   assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
   assert.equal(c.entry.content.length, 1);
   assert.equal(c.entry.content[0].path, "art/cover.png");
@@ -370,7 +370,7 @@ const coverZip = () => makeZipBytes({
   "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll"),
   "art/cover.png": CONTENT_PNG,
 });
-const COVER = { path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "rights-art", text_version: 3 };
+const COVER = { path: "art/cover.png", sha256: sha256(CONTENT_PNG), text_id: "market.rights.art", text_version: 3 };
 
 test("rights gate: a part the author has not confirmed waits (W_CONTENT_UNCONFIRMED), is never listed, and is reported with its parts", async () => {
   const c = await run({ zip: coverZip() });
@@ -389,9 +389,9 @@ test("rights gate: a confirmation covers a part only at the SAME path and the SA
 });
 
 test("rights gate: full coverage lists the release with content_confirmed {text_id: text_version}, and no account", async () => {
-  const c = await run({ zip: coverZip(), request: { ...REQUEST, confirmed: [COVER, { path: "art/gone.png", sha256: "b".repeat(64), text_id: "rights-audio", text_version: 2 }] } });
+  const c = await run({ zip: coverZip(), request: { ...REQUEST, confirmed: [COVER, { path: "art/gone.png", sha256: "b".repeat(64), text_id: "market.rights.audio", text_version: 2 }] } });
   assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
-  assert.deepEqual(c.entry.content_confirmed, { "rights-art": 3 }, "the text version the part was confirmed under, and only the texts a present part used");
+  assert.deepEqual(c.entry.content_confirmed, { "market.rights.art": 3 }, "the text version the part was confirmed under, and only the texts a present part used");
 });
 
 test("rights gate: a release with no content parts needs no confirmation and says none", async () => {
@@ -436,7 +436,10 @@ test("parseRequest: a lease item, strictly; no account, token or subject member 
   bad({ ...ok, binding_token_sha256: "C".repeat(64) }, /binding_token_sha256/);
   bad({ ...ok, binding_token_sha256: "c".repeat(63) }, /binding_token_sha256/);
   bad({ ...ok, confirmed: [{ ...COVER, text_version: 0 }] }, /confirmed\[0\]/);
-  bad({ ...ok, confirmed: [{ ...COVER, text_id: "market.rights.art" }] }, /confirmed\[0\]/);
+  // a text id is dot-separated segments, each [a-z][a-z0-9_-]* (games-index-v1 content_confirmed)
+  for (const id of ["market..rights", "market.rights.", ".market", "Market.rights", "market.9rights"]) {
+    bad({ ...ok, confirmed: [{ ...COVER, text_id: id }] }, /confirmed\[0\]/);
+  }
   bad({ ...ok, confirmed: [COVER, { ...COVER, path: "b.png", text_version: 4 }] }, /CURRENT version/);
   for (const k of ["account", "binding_token", "subject"]) bad({ ...ok, [k]: "x" }, new RegExp(k));
 });

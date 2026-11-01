@@ -187,13 +187,13 @@ test("rights gate, sign side: a candidate whose findings hold a wait, or whose p
   unconfirmed.entry.content = [part];
   const confirmed = candidate();
   confirmed.entry.content = [part];
-  confirmed.entry.content_confirmed = { "rights-art": 2 };
+  confirmed.entry.content_confirmed = { "market.rights.art": 2 };
   const r = c.sign({ candidates: [forged, unconfirmed, confirmed] });
   assert.deepEqual(r.accepted.map((a) => a.result), ["refused", "refused", "listed"], JSON.stringify(r.accepted));
   assert.match(r.accepted[0].reason, /W_CONTENT_UNCONFIRMED/);
   assert.match(r.accepted[1].reason, /content_confirmed/);
   const listed = c.dist("games-index.json").signed.entries.find((e) => e.id === confirmed.entry.id);
-  assert.deepEqual(listed.content_confirmed, { "rights-art": 2 });
+  assert.deepEqual(listed.content_confirmed, { "market.rights.art": 2 });
 });
 
 test("an accepted candidate clears its own stale hold, and only its own", () => {

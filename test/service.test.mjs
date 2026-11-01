@@ -39,7 +39,7 @@ test("ingest-work: leases with the run's id, writes one request file per lease w
   const service = fakeService({
     leases: { schema: "astra.games.leases/1", items: [
       { lease_id: "L1", repo_id: 900000001, tag: "v1.0.0", binding_token_sha256: H("a"), confirmed: [], extra_member: "ignored" },
-      { lease_id: "L2", repo_id: 900000002, tag: null, confirmed: [{ path: "a.png", sha256: H("b"), text_id: "rights-art", text_version: 1 }] },
+      { lease_id: "L2", repo_id: 900000002, tag: null, confirmed: [{ path: "a.png", sha256: H("b"), text_id: "market.rights.art", text_version: 1 }] },
     ], poll: [] },
   });
   const r = await ingestWork({ out: path.join(dir, "req"), env: ENV(dir), client: service, github: null, log: quiet });

@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at d1da6655e81dbf7ad2d8dc56bd61a210aa617a4d, path testdata/games/manifests/valid/runner-builtin.toml.
+# VENDORED from mihailinl/AstraPlugins at a11fc44d90a1e2335a3969670749bc52a95281f3, path testdata/games/manifests/valid/runner-builtin.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Valid: the first-party Unity Mono runner. A built-in engine needs no
