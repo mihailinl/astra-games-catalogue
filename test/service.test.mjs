@@ -10,9 +10,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { ingestReport, ingestWork } from "../bin/service.mjs";
+import { ingestReport, ingestWork, signReport, signWork } from "../bin/service.mjs";
+import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
-  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused,
+  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused, signResultBody,
 } from "../lib/service.mjs";
 import { tmpdir } from "./helpers.mjs";
 
@@ -170,4 +171,79 @@ test("the client: an https base from GAMES_SERVICE_URL (production by default), 
   assert.equal(await c.signedWake(), 202);
   assert.deepEqual(seen.at(-1), [`${DEFAULT_BASE}/games/signed-wake`, "POST", null], "the wake carries no credential");
   await assert.rejects(oidcToken({ env: {}, fetchImpl }), /id-token: write/);
+});
+
+// ── sign.yml's work and report jobs ──────────────────────────────────────
+
+
+test("sign-work: pulls acts and health into files, counts the Ingest run's candidates, and says when there is nothing to sign", async () => {
+  const github = (names) => ({ async runArtifacts(repo, id) { return names === null ? { status: "transient", reason: "HTTP 502" } : { status: "found", names }; } });
+  const run = async (answer, names, extra = {}) => {
+    const dir = tmpdir();
+    const r = await signWork({ out: path.join(dir, "w"), env: { ...ENV(dir), INGEST_RUN_ID: "77", GITHUB_REPOSITORY: "mihailinl/astra-games-catalogue", ...extra }, client: fakeService({ work: answer }), github: github(names), log: quiet });
+    return { r, dir, out: outputs(dir) };
+  };
+  const idle = await run({ schema: "astra.games.work/1", acts: [], health: null }, ["games-requests"]);
+  assert.equal(idle.r.todo, false);
+  assert.equal(idle.out.todo, "false");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(idle.dir, "w", "acts.json"), "utf8")), []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(idle.dir, "w", "health.json"), "utf8")), null);
+  assert.equal((await run({ acts: [{ type: "M_YANK" }], health: null }, [])).out.todo, "true");
+  assert.equal((await run({ acts: [], health: { "a/b": { rating_count: 1 } } }, [])).out.todo, "true");
+  const cands = await run({ acts: [], health: null }, ["games-requests", "games-candidate-L1", "games-candidate-L2"]);
+  assert.equal(cands.out.candidates, "2");
+  assert.equal(cands.out.todo, "true");
+  assert.equal((await run({ acts: [], health: null }, null)).out.todo, "true", "an unanswered listing never skips a run that may have candidates");
+  assert.equal((await run({ acts: [], health: null }, ["x"], { INGEST_RUN_ID: "" })).out.todo, "false", "a dispatched run has no Ingest run");
+});
+
+test("bin/sign.mjs reads the work files and both candidate layouts", () => {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, "acts.json"), JSON.stringify([{ type: "M_YANK" }]));
+  fs.writeFileSync(path.join(dir, "health.json"), "null");
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "acts.json"), healthFile: path.join(dir, "health.json") }), { acts: [{ type: "M_YANK" }], health: undefined });
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "none.json"), healthFile: null }), { acts: [], health: undefined });
+  const c = path.join(dir, "c");
+  fs.mkdirSync(path.join(c, "games-candidate-L2"), { recursive: true });
+  fs.writeFileSync(path.join(c, "games-candidate-L2", "candidate.json"), JSON.stringify({ n: 2 }));
+  fs.writeFileSync(path.join(c, "a.json"), JSON.stringify({ n: 1 }));
+  assert.deepEqual(readCandidates(c), [{ n: 1 }, { n: 2 }]);
+});
+
+const REPORT = {
+  accepted: [{ request: { lease_id: "L1", repo_id: 1, tag: "v1" }, result: "listed", reason: "listed" }],
+  acts: [{ confirmation: { kind: "console-2fa", ref: "act-9" }, type: "M_YANK", seq: 12 }],
+  duplicateActs: [{ ref: "act-7", type: "M_REVOKE", seq: 10 }],
+  refusedActs: [],
+  issuedAt: 1793448000,
+  keyId: "astra-games-2026a",
+};
+
+test("the sign result names every act by its ref: applied with its seq, a duplicate applied with its FIRST seq, a refusal with its problems", () => {
+  const body = signResultBody({ runId: "555", dataSha: "f".repeat(40), report: { ...REPORT, refusedActs: [{ ref: "act-8", type: "M_PROMOTE", problems: ["not a prerelease"] }] } });
+  assert.deepEqual(body, {
+    schema: "astra.games.sign-result/1", run_id: 555, data_sha: "f".repeat(40), issued_at: 1793448000, key_id: "astra-games-2026a",
+    accepted: [{ request: { lease_id: "L1", repo_id: 1, tag: "v1" }, result: "listed", reason: "listed" }],
+    acts: [
+      { ref: "act-9", outcome: "applied", seq: 12 },
+      { ref: "act-7", outcome: "applied", seq: 10 },
+      { ref: "act-8", outcome: "refused", problems: ["not a prerelease"] },
+    ],
+  });
+});
+
+test("sign-report: posts the result, wakes the service, and fails only after both when an act was refused", async () => {
+  const dir = tmpdir();
+  const write = (r) => { const f = path.join(dir, `r${Math.random()}.json`); fs.writeFileSync(f, JSON.stringify(r)); return f; };
+  const env = { GITHUB_RUN_ID: "555", DATA_SHA: "a".repeat(40) };
+  const ok = fakeService({ signResults: {}, signedWake: 202 });
+  assert.deepEqual((await signReport({ reportFile: write(REPORT), env, client: ok, log: quiet })).failed, []);
+  assert.deepEqual(ok.calls.map(([n]) => n), ["signResults", "signedWake"]);
+  const refused = fakeService({ signResults: {}, signedWake: 202 });
+  const r = await signReport({ reportFile: write({ ...REPORT, refusedActs: [{ ref: "act-8", type: "M_PROMOTE", problems: ["x"] }] }), env, client: refused, log: quiet });
+  assert.equal(r.failed.length, 1);
+  assert.deepEqual(refused.calls.map(([n]) => n), ["signResults", "signedWake"], "reported and woken before failing");
+  const noWake = fakeService({ signResults: {}, signedWake: new Error("ECONNREFUSED") });
+  assert.deepEqual((await signReport({ reportFile: write(REPORT), env, client: noWake, log: quiet })).failed, [], "a failed wake is not a failed signing");
+  await assert.rejects(signReport({ reportFile: write(REPORT), env: { ...env, DATA_SHA: "" }, client: ok, log: quiet }), /DATA_SHA/);
 });

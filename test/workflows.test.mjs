@@ -147,7 +147,7 @@ test("every action is pinned to the peeled commit recorded in action-pins.json",
 test("permissions are deny-by-default at the top and minimal per job", () => {
   const allowed = {
     "ingest.yml": { work: { contents: "read", "id-token": "write" }, ingest: { contents: "read" }, report: { contents: "read", "id-token": "write" } },
-    "sign.yml": { sign: { contents: "write", actions: "read" }, notify: { "id-token": "write" } },
+    "sign.yml": { work: { contents: "read", actions: "read", "id-token": "write" }, sign: { contents: "write", actions: "read" }, report: { contents: "read", "id-token": "write" } },
     "resign.yml": { resign: { contents: "write" } },
     "promote.yml": { promote: { contents: "read" } },
     "ci.yml": { tests: { contents: "read" }, vendored: { contents: "read" } },
@@ -167,6 +167,23 @@ test("no `${{ }}` expression inside any run: script, and no pull_request_target"
     for (const s of runScripts(t)) assert.ok(!s.includes("${{"), `${f}: a run: script interpolates an expression:\n${s}`);
     assert.doesNotMatch(t, /pull_request_target/, `${f} uses pull_request_target`);
   }
+});
+
+test("sign.yml pulls its work: no event payload, a skip when there is nothing to sign, candidates by pattern, only from main's ingest.yml", () => {
+  const t = read("sign.yml");
+  const js = jobs(t);
+  assert.doesNotMatch(t, /github\.event\.(inputs|client_payload)|--from-event|GITHUB_EVENT_PATH/, "nothing reads an event payload");
+  const work = js.work.join("\n");
+  assert.match(work, /node bin\/service\.mjs sign-work --out "\$RUNNER_TEMP\/work"/);
+  for (const cond of ["head_branch == 'main'", "path == '.github/workflows/ingest.yml'", "head_repository.full_name == github.repository"]) {
+    assert.ok(work.includes(`github.event.workflow_run.${cond}`), `the work job checks workflow_run.${cond}`);
+  }
+  const sign = js.sign.join("\n");
+  assert.match(sign, /^ {4}if: needs\.work\.outputs\.todo == 'true'$/m, "the signing job is skipped when there is nothing to sign");
+  assert.match(sign, /pattern: games-candidate-\*/);
+  assert.match(sign, /--acts "\$RUNNER_TEMP\/work\/acts\.json" --health "\$RUNNER_TEMP\/work\/health\.json"/);
+  assert.match(js.report.join("\n"), /node bin\/service\.mjs sign-report --report/);
+  assert.match(read("resign.yml"), /\n {2}schedule:\n/, "resign.yml keeps the daily re-sign");
 });
 
 test("the signer and the re-signer share one concurrency group; nothing cancels a signing run", () => {

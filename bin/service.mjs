@@ -17,6 +17,15 @@
 //       one astra.games.ingest-result/1 per lease in $LEASES whose
 //       <dir>/games-candidate-<lease>/candidate.json exists; fails the job
 //       (after posting the rest) on a refused post or MALFORMED > 0
+//   node bin/service.mjs sign-work --out <dir>
+//       GET bot/games/work into <dir>/acts.json and <dir>/health.json, and
+//       counts the triggering Ingest run's candidates ($INGEST_RUN_ID); writes
+//       `acts`, `health`, `candidates` and `todo` (true when there is anything
+//       to sign) to $GITHUB_OUTPUT
+//   node bin/service.mjs sign-report --report <sign-report.json>
+//       POST bot/games/sign-results (astra.games.sign-result/1, with
+//       $DATA_SHA), then POST games/signed-wake with no credential; fails the
+//       job AFTER both when an act was refused
 //
 // Environment: GAMES_SERVICE_URL, GAMES_SERVICE_AUDIENCE (repository
 // variables, optional), GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, and the runner's
@@ -28,7 +37,7 @@ import path from "node:path";
 import { githubApi } from "../lib/github.mjs";
 import { LEASE_ID } from "../lib/ingest.mjs";
 import {
-  ingestResultBody, leaseRequests, MAX_LEASES, pollReleases, readLeases, serviceClient, ServiceRefused,
+  ingestResultBody, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody,
 } from "../lib/service.mjs";
 import { loadPolicy, writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
@@ -105,6 +114,46 @@ export async function ingestReport({ candidates, env = process.env, client = ser
   return { posted, failed };
 }
 
+const CANDIDATE_ARTIFACT = /^games-candidate-[A-Za-z0-9_-]{1,64}$/;
+
+export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console }) {
+  const { acts, health } = readWork(await client.work());
+  let candidates = 0;
+  if (env.INGEST_RUN_ID) {
+    const r = await github.runArtifacts(env.GITHUB_REPOSITORY, env.INGEST_RUN_ID);
+    // an unanswered listing must not skip a run that has candidates: assume some
+    if (r.status !== "found") log.warn(`GitHub did not list Ingest run ${env.INGEST_RUN_ID}'s artifacts (${r.reason}); signing as if it left candidates`);
+    candidates = r.status === "found" ? r.names.filter((n) => CANDIDATE_ARTIFACT.test(n)).length : 1;
+  }
+  fs.mkdirSync(out, { recursive: true });
+  writeJson(path.join(out, "acts.json"), acts);
+  writeJson(path.join(out, "health.json"), health);
+  const todo = acts.length > 0 || health !== null || candidates > 0;
+  output(env, { acts: acts.length, health: health === null ? "0" : "1", candidates, todo: String(todo) });
+  log.log(`work: ${acts.length} act(s), ${health === null ? "no" : "new"} health, ${candidates} candidate(s); ${todo ? "signing" : "nothing to sign (resign.yml keeps the daily re-sign)"}`);
+  return { acts: acts.length, health: health !== null, candidates, todo };
+}
+
+export async function signReport({ reportFile, env = process.env, client = serviceClient({ env }), log = console }) {
+  const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+  if (!/^[0-9a-f]{40}$/.test(String(env.DATA_SHA))) throw new Error("DATA_SHA is not the data commit");
+  const failed = [];
+  try {
+    await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
+    log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
+  } catch (e) {
+    failed.push(`sign-results: ${e.message}`);
+  }
+  try {
+    log.log(`signed wake: HTTP ${await client.signedWake()}`);
+  } catch (e) {
+    // a failed wake is not a failed signing: the service also polls the data branch
+    log.warn(`signed wake skipped: ${e.message}`);
+  }
+  if (report.refusedActs.length) failed.push(`${report.refusedActs.length} moderator act(s) refused: ${report.refusedActs.map((r) => r.ref ?? r.type).join(", ")}`);
+  return { failed };
+}
+
 async function main(argv) {
   const [cmd, ...args] = argv;
   const opt = (n) => (args.indexOf(n) >= 0 ? args[args.indexOf(n) + 1] : null);
@@ -119,7 +168,18 @@ async function main(argv) {
     for (const f of r.failed) console.error(`report failed: ${f}`);
     return r.failed.length ? 1 : 0;
   }
-  throw new Error(`unknown command ${JSON.stringify(cmd)}; one of ingest-work, ingest-report`);
+  if (cmd === "sign-work") {
+    if (!opt("--out")) throw new Error("usage: bin/service.mjs sign-work --out <dir>");
+    await signWork({ out: opt("--out") });
+    return 0;
+  }
+  if (cmd === "sign-report") {
+    if (!opt("--report")) throw new Error("usage: bin/service.mjs sign-report --report <sign-report.json>");
+    const r = await signReport({ reportFile: opt("--report") });
+    for (const f of r.failed) console.error(`report failed: ${f}`);
+    return r.failed.length ? 1 : 0;
+  }
+  throw new Error(`unknown command ${JSON.stringify(cmd)}; one of ingest-work, ingest-report, sign-work, sign-report`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
