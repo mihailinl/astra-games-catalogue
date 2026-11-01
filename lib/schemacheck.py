@@ -14,7 +14,9 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
     python3 lib/schemacheck.py toml FILE      (the same, for a loose TOML file)
     python3 lib/schemacheck.py content ZIP   < {"declared": [{"path", "kind", ...}, ...]}
         -> {"ok": true, "undeclared": [...], "missing": [...], "duplicates": [...],
-            "parts": [{"path","sha256","vrm_licence"}], "licence_refusals": [...], "gaps": [...]}
+            "parts": [{"path","sha256","licence_source","vrm_licence"?}],
+            "licence_refusals": [...], "licence_unknown": [...],
+            "licence_undeclared": [...], "gaps": [...]}
          | {"ok": false, "error": "..."}
 
 `manifest` reads astra-gi.toml from the root of a release zip with
@@ -208,9 +210,11 @@ def parse_glb_json_chunk(raw):
         return None
 
 
-def parse_vrm_licence(raw):
-    """manifest.md §2.7.3's HARD VRM GATE. None when no VRM meta is present
-    (not itself a refusal); otherwise {"vrm_version", "fields", "refusal"}."""
+def extract_vrm_meta(raw):
+    """(vrm_version, meta_dict) from extensions.VRM.meta / extensions.
+    VRMC_vrm.meta, or None when the GLB carries neither -- legal
+    DRAFT-v3.md Part 6 G4's "unknown" case (flagged, never refused: not
+    every .vrm file carries a meta block)."""
     doc = parse_glb_json_chunk(raw)
     if not isinstance(doc, dict):
         return None
@@ -218,33 +222,94 @@ def parse_vrm_licence(raw):
     if not isinstance(exts, dict):
         return None
     vrm0 = exts.get("VRM")
-    meta0 = vrm0.get("meta") if isinstance(vrm0, dict) else None
-    if isinstance(meta0, dict):
-        refusal = None
-        if meta0.get("allowedUserName") == "OnlyAuthor":
-            refusal = {"field": "extensions.VRM.meta.allowedUserName", "value": "OnlyAuthor"}
-        elif meta0.get("licenseName") == "Redistribution_Prohibited":
-            refusal = {"field": "extensions.VRM.meta.licenseName", "value": "Redistribution_Prohibited"}
-        fields = {k: meta0[k] for k in ("allowedUserName", "licenseName") if k in meta0}
-        return {"vrm_version": "0.x", "fields": fields, "refusal": refusal}
+    if isinstance(vrm0, dict) and isinstance(vrm0.get("meta"), dict):
+        return "0.x", vrm0["meta"]
     vrm1 = exts.get("VRMC_vrm")
-    meta1 = vrm1.get("meta") if isinstance(vrm1, dict) else None
-    if isinstance(meta1, dict):
-        refusal = None
-        if meta1.get("avatarPermission") == "onlyAuthor":
-            refusal = {"field": "extensions.VRMC_vrm.meta.avatarPermission", "value": "onlyAuthor"}
-        elif meta1.get("allowRedistribution") is False:
-            refusal = {"field": "extensions.VRMC_vrm.meta.allowRedistribution", "value": False}
-        fields = {k: meta1[k] for k in ("avatarPermission", "allowRedistribution") if k in meta1}
-        return {"vrm_version": "1.0", "fields": fields, "refusal": refusal}
+    if isinstance(vrm1, dict) and isinstance(vrm1.get("meta"), dict):
+        return "1.0", vrm1["meta"]
     return None
 
 
+def rule_vrm_licence_refused(vrm_version, meta):
+    """
+    manifest.md §2.7.3 / marketplace legal DRAFT-v3.md Part 6 G4, D8
+    (widened): refuse on the decided redistribution refusal OR an
+    author-only/named-people avatar permission, reading EACH SPEC'S OWN
+    DEFAULT for a field the file leaves out -- never "absent means
+    allowed". Defaults are astra-companion's own (src/vrm/meta.rs:80-100,
+    licence_of/redistribution_of, the implementation this gate ports):
+      VRM 1.0 absent avatarPermission -> "onlyAuthor"; absent/non-true
+        allowRedistribution -> prohibited (the meta schema's own default).
+      VRM 0.x absent allowedUserName -> "OnlyAuthor"; absent licenseName ->
+        prohibited (UniVRM's default).
+    Returns {"refused", "field", "value", "defaulted"}.
+    """
+    if vrm_version == "0.x":
+        license_name = meta.get("licenseName")
+        if license_name is None:
+            return {"refused": True, "field": "extensions.VRM.meta.licenseName", "value": None, "defaulted": True}
+        if license_name == "Redistribution_Prohibited":
+            return {"refused": True, "field": "extensions.VRM.meta.licenseName", "value": license_name, "defaulted": False}
+        allowed_user = meta.get("allowedUserName")
+        if allowed_user is None:
+            return {"refused": True, "field": "extensions.VRM.meta.allowedUserName", "value": None, "defaulted": True}
+        if allowed_user in ("OnlyAuthor", "ExplicitlyLicensedPerson"):
+            return {"refused": True, "field": "extensions.VRM.meta.allowedUserName", "value": allowed_user, "defaulted": False}
+        return {"refused": False, "field": None, "value": None, "defaulted": False}
+    if vrm_version == "1.0":
+        allow_redist = meta.get("allowRedistribution")
+        if allow_redist is not True:
+            return {
+                "refused": True, "field": "extensions.VRMC_vrm.meta.allowRedistribution",
+                "value": allow_redist, "defaulted": "allowRedistribution" not in meta,
+            }
+        avatar_perm = meta.get("avatarPermission")
+        if avatar_perm is None:
+            return {"refused": True, "field": "extensions.VRMC_vrm.meta.avatarPermission", "value": None, "defaulted": True}
+        if avatar_perm in ("onlyAuthor", "onlySeparatelyLicensedPerson"):
+            return {"refused": True, "field": "extensions.VRMC_vrm.meta.avatarPermission", "value": avatar_perm, "defaulted": False}
+        return {"refused": False, "field": None, "value": None, "defaulted": False}
+    raise NotImplementedError(vrm_version)
+
+
+# legal DRAFT-v3.md Part 6 G5: kept with the part so the install sheet and
+# the public card can show the whole licence line. Raw keys the file
+# carries -- an absent key's spec default is applied only by
+# rule_vrm_licence_refused above, never fabricated here (that is the
+# install sheet's own display concern).
+VRM_GATE_FIELDS = {"0.x": ("allowedUserName", "licenseName"), "1.0": ("avatarPermission", "allowRedistribution")}
+VRM_USAGE_FIELDS = {
+    "0.x": ("violentUssageName", "sexualUssageName", "commercialUssageName"),
+    "1.0": ("allowExcessivelyViolentUsage", "allowExcessivelySexualUsage", "allowPoliticalOrReligiousUsage", "allowAntisocialOrHateUsage"),
+}
+
+
+def vrm_gate(raw):
+    """The full G4/G5 verdict for one .vrm's (or a readable .astrachar
+    body's) bytes. Returns {"status": "ok"|"refused"|"unknown",
+    "vrm_licence": {"vrm_version","fields"}|None, "refusal": {...}|None}.
+    "unknown" is never a refusal: G4 says it is flagged
+    (F_CONTENT_VRM_META_UNKNOWN) and passes only with the character
+    checkbox and the licence line, which is the publish form's job."""
+    extracted = extract_vrm_meta(raw)
+    if extracted is None:
+        return {"status": "unknown", "vrm_licence": None, "refusal": None}
+    vrm_version, meta = extracted
+    verdict = rule_vrm_licence_refused(vrm_version, meta)
+    fields = {k: meta[k] for k in VRM_GATE_FIELDS[vrm_version] + VRM_USAGE_FIELDS[vrm_version] if k in meta}
+    vrm_licence = {"vrm_version": vrm_version, "fields": fields}
+    if verdict["refused"]:
+        refusal = {"field": verdict["field"], "value": verdict["value"], "defaulted": verdict["defaulted"]}
+        return {"status": "refused", "vrm_licence": vrm_licence, "refusal": refusal}
+    return {"status": "ok", "vrm_licence": vrm_licence, "refusal": None}
+
+
 def read_astrachar_body_vrm(outer_zip, entry_name):
-    """The body inside a .astrachar bundle, read for the VRM gate, WHEN the
-    bundle's format is readable (astra-companion docs/character-files-and-
-    2d-editor.md §1.3/§1.4). Returns (vrm_licence_or_None, gap_reason_or_None)
-    -- a gap is never a refusal."""
+    """The body inside a .astrachar bundle, gated the same as a bare .vrm,
+    WHEN the bundle's format is readable (astra-companion docs/character-
+    files-and-2d-editor.md §1.3/§1.4). Returns (gate_or_None,
+    gap_reason_or_None) -- a gap (the bundle itself unreadable) is never a
+    refusal; `gate` is `vrm_gate`'s own result when it is."""
     try:
         with outer_zip.open(entry_name) as f:
             raw = f.read(ASTRACHAR_CAP + 1)
@@ -265,7 +330,7 @@ def read_astrachar_body_vrm(outer_zip, entry_name):
             body_bytes = f.read(CONTENT_ENTRY_CAP + 1)
         if len(body_bytes) > CONTENT_ENTRY_CAP or not _is_glb(body_bytes[:32]):
             return None, "astrachar_body_unreadable"
-        return parse_vrm_licence(body_bytes), None
+        return vrm_gate(body_bytes), None
     except (zipfile.BadZipFile, KeyError, json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
         return None, f"astrachar_unreadable: {type(e).__name__}"
 
@@ -304,21 +369,18 @@ def content_report(zip_path, declared):
             if len(raw) > CONTENT_ENTRY_CAP:
                 return {"ok": False, "error": f"{info.filename} inflates past {CONTENT_ENTRY_CAP} bytes"}
             content_files.append(info.filename)
-            vrm_licence = parse_vrm_licence(raw) if ext == ".vrm" else None
-            parts_by_path[info.filename] = {
-                "sha256": hashlib.sha256(raw).hexdigest(),
-                "vrm_licence": vrm_licence,
-            }
+            gate = vrm_gate(raw) if ext == ".vrm" else None
+            parts_by_path[info.filename] = {"sha256": hashlib.sha256(raw).hexdigest(), "gate": gate}
 
         for entry in declared:
             path = entry.get("path") if isinstance(entry, dict) else None
             if not isinstance(path, str) or path not in parts_by_path:
                 continue
             if pathlib.PurePosixPath(path).suffix.lower() == ".astrachar":
-                vrm_licence, gap = read_astrachar_body_vrm(z, path)
+                gate, gap = read_astrachar_body_vrm(z, path)
                 if gap:
                     gaps.append({"path": path, "reason": gap})
-                parts_by_path[path]["vrm_licence"] = vrm_licence
+                parts_by_path[path]["gate"] = gate
 
     declared_paths = [e.get("path") for e in declared if isinstance(e, dict) and isinstance(e.get("path"), str)]
     seen, dup = set(), set()
@@ -333,14 +395,32 @@ def content_report(zip_path, declared):
     missing = sorted(declared_set - content_set)
     duplicates = sorted(dup)
 
+    declared_by_path = {e["path"]: e for e in declared if isinstance(e, dict) and isinstance(e.get("path"), str)}
     parts = []
     licence_refusals = []
+    licence_unknown = []
+    licence_undeclared = []
     for path in sorted(declared_set & content_set):
         info = parts_by_path[path]
-        parts.append({"path": path, "sha256": info["sha256"], "vrm_licence": info["vrm_licence"]})
-        vl = info["vrm_licence"]
-        if vl and vl.get("refusal"):
-            licence_refusals.append({"path": path, "field": vl["refusal"]["field"], "value": vl["refusal"]["value"]})
+        gate = info["gate"]
+        gate_status = gate["status"] if gate else None
+        vrm_licence = gate["vrm_licence"] if gate and gate_status != "unknown" else None
+        if gate_status == "refused":
+            licence_refusals.append({"path": path, "field": gate["refusal"]["field"], "value": gate["refusal"]["value"]})
+        if gate_status == "unknown":
+            licence_unknown.append(path)
+        declared_licence = declared_by_path.get(path, {}).get("licence")
+        if vrm_licence is not None:
+            licence_source = "vrm"
+        elif declared_licence:
+            licence_source = "declared"
+        else:
+            licence_source = None
+            licence_undeclared.append(path)
+        part = {"path": path, "sha256": info["sha256"], "licence_source": licence_source}
+        if vrm_licence is not None:
+            part["vrm_licence"] = vrm_licence
+        parts.append(part)
 
     return {
         "ok": True,
@@ -349,6 +429,8 @@ def content_report(zip_path, declared):
         "duplicates": duplicates,
         "parts": parts,
         "licence_refusals": licence_refusals,
+        "licence_unknown": licence_unknown,
+        "licence_undeclared": licence_undeclared,
         "gaps": gaps,
     }
 

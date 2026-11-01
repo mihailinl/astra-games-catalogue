@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at ac3f13b1f5992c997c0de40374e07a3996551448, path testdata/games/manifests/invalid/target-anti-cheat-missing.toml.
+# VENDORED from mihailinl/AstraPlugins at d1da6655e81dbf7ad2d8dc56bd61a210aa617a4d, path testdata/games/manifests/invalid/target-anti-cheat-missing.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Invalid: a plain schema failure (TARGET_KEYS requires anti_cheat;

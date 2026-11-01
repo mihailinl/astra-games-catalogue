@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// AstraPlugins manifest.md §2.7: the content-coverage check and the HARD VRM
-// licence gate, over real zip bytes (lib/content.mjs + schemacheck.py's
-// `content` command). Each test below takes a release that is otherwise
-// clean and flips the ONE fact the refusal cares about, the same shape
-// test/rules.test.mjs uses for the manifest goldens.
+// AstraPlugins manifest.md §2.7 / legal DRAFT-v3.md Part 6 G4-G5: the
+// content-coverage check and the HARD VRM licence gate, over real zip
+// bytes (lib/content.mjs + schemacheck.py's `content` command). Each test
+// below takes a release that is otherwise clean and flips the ONE fact the
+// refusal cares about, the same shape test/rules.test.mjs uses for the
+// manifest goldens.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -20,9 +21,19 @@ const PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
 const OGG = Buffer.from("OggS" + "\x00".repeat(8), "latin1");
 const FBX = Buffer.from("Kaydara FBX Binary  \x00\x1a\x00" + "\x00".repeat(8), "latin1");
 
-const ALLOWED_VRM = makeGlb({ extensions: { VRM: { meta: { allowedUserName: "Everyone", licenseName: "Redistribution_Allowed" } } } });
-const REFUSED_VRM0 = makeGlb({ extensions: { VRM: { meta: { allowedUserName: "OnlyAuthor" } } } });
-const REFUSED_VRM1 = makeGlb({ extensions: { VRMC_vrm: { meta: { avatarPermission: "onlyAuthor" } } } });
+// Each fixture below isolates ONE condition: the OTHER spec field is set to
+// an explicitly-allowed value, because rule_vrm_licence_refused checks
+// redistribution before avatar-permission for each spec, and an absent
+// field already refuses (G4's corrected defaults).
+const ALLOWED_VRM0 = makeGlb({ extensions: { VRM: { meta: { allowedUserName: "Everyone", licenseName: "Redistribution_Allowed" } } } });
+const ALLOWED_VRM1 = makeGlb({ extensions: { VRMC_vrm: { meta: { avatarPermission: "everyone", allowRedistribution: true } } } });
+const ONLY_AUTHOR_VRM0 = makeGlb({ extensions: { VRM: { meta: { licenseName: "Redistribution_Allowed", allowedUserName: "OnlyAuthor" } } } });
+const ONLY_AUTHOR_VRM1 = makeGlb({ extensions: { VRMC_vrm: { meta: { allowRedistribution: true, avatarPermission: "onlyAuthor" } } } });
+const NAMED_PEOPLE_VRM0 = makeGlb({ extensions: { VRM: { meta: { licenseName: "Redistribution_Allowed", allowedUserName: "ExplicitlyLicensedPerson" } } } });
+const NAMED_PEOPLE_VRM1 = makeGlb({ extensions: { VRMC_vrm: { meta: { allowRedistribution: true, avatarPermission: "onlySeparatelyLicensedPerson" } } } });
+const ABSENT_FIELDS_VRM0 = makeGlb({ extensions: { VRM: { meta: {} } } });
+const ABSENT_FIELDS_VRM1 = makeGlb({ extensions: { VRMC_vrm: { meta: {} } } });
+const UNKNOWN_NO_META = makeGlb({ asset: { version: "2.0" } });
 
 function zipPathFor(files) {
   const dir = tmpdir();
@@ -32,6 +43,7 @@ function zipPathFor(files) {
 }
 
 const codesOf = (r) => r.findings.map((f) => f.code);
+const contentEntry = (over = {}) => ({ path: "character/avatar.vrm", kind: "character", title: "t", credit: "c", ...over });
 
 test("E_CONTENT_UNDECLARED: an extra content-typed file with no entry, fixed by declaring it", () => {
   const zipPath = zipPathFor({ "astra-gi.toml": "x", "art/cover.png": PNG, "audio/theme.ogg": OGG });
@@ -75,45 +87,115 @@ test("a renamed loader is not picked up as content by extension alone (magic byt
   assert.deepEqual(r.content, []);
 });
 
-test("E_CONTENT_LICENCE_REFUSED: VRM 0.x OnlyAuthor is refused, naming the field; the allowed fixture passes", () => {
-  const manifest = { integration: { content: [{ path: "character/avatar.vrm", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const refusedZip = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": REFUSED_VRM0 });
-  const r1 = checkContent({ zipPath: refusedZip, manifest });
-  const f1 = r1.findings.find((f) => f.code === CODES.E_CONTENT_LICENCE_REFUSED);
-  assert.ok(f1, JSON.stringify(r1.findings));
-  assert.equal(f1.field, "extensions.VRM.meta.allowedUserName");
-  assert.deepEqual(r1.content, [], "a licence-refused part is never listed");
+// ── G4: the HARD VRM gate, the corrected defaults, and named-people ──────
 
-  const allowedZip = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": ALLOWED_VRM });
-  const r2 = checkContent({ zipPath: allowedZip, manifest });
-  assert.ok(!codesOf(r2).includes(CODES.E_CONTENT_LICENCE_REFUSED), JSON.stringify(r2.findings));
-  assert.equal(r2.content.length, 1);
-  assert.equal(r2.content[0].vrm_licence.vrm_version, "0.x");
-  assert.equal(r2.content[0].sha256.length, 64);
+for (const [label, bytes, field, value] of [
+  ["VRM 0.x only-author", ONLY_AUTHOR_VRM0, "extensions.VRM.meta.allowedUserName", "OnlyAuthor"],
+  ["VRM 1.0 only-author", ONLY_AUTHOR_VRM1, "extensions.VRMC_vrm.meta.avatarPermission", "onlyAuthor"],
+  ["VRM 0.x named-people", NAMED_PEOPLE_VRM0, "extensions.VRM.meta.allowedUserName", "ExplicitlyLicensedPerson"],
+  ["VRM 1.0 named-people", NAMED_PEOPLE_VRM1, "extensions.VRMC_vrm.meta.avatarPermission", "onlySeparatelyLicensedPerson"],
+  ["VRM 0.x absent fields default to refused", ABSENT_FIELDS_VRM0, "extensions.VRM.meta.licenseName", null],
+  ["VRM 1.0 absent fields default to refused", ABSENT_FIELDS_VRM1, "extensions.VRMC_vrm.meta.allowRedistribution", null],
+]) {
+  test(`E_CONTENT_LICENCE_REFUSED: ${label}`, () => {
+    const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+    const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": bytes });
+    const r = checkContent({ zipPath, manifest });
+    const f = r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_REFUSED);
+    assert.ok(f, JSON.stringify(r.findings));
+    assert.equal(f.field, field);
+    assert.deepEqual(r.content, [], "a licence-refused part is never listed");
+  });
+}
+
+test("the allowed VRM 0.x and 1.0 fixtures pass, and content[] keeps the VRM licence", () => {
+  for (const [bytes, version] of [[ALLOWED_VRM0, "0.x"], [ALLOWED_VRM1, "1.0"]]) {
+    const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+    const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": bytes });
+    const r = checkContent({ zipPath, manifest });
+    assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_REFUSED), JSON.stringify(r.findings));
+    assert.equal(r.content.length, 1);
+    assert.equal(r.content[0].vrm_licence.vrm_version, version);
+    assert.equal(r.content[0].licence_source, "vrm");
+    assert.equal(r.content[0].sha256.length, 64);
+  }
 });
 
-test("E_CONTENT_LICENCE_REFUSED: VRM 1.0 onlyAuthor is refused, naming the field", () => {
-  const manifest = { integration: { content: [{ path: "character/avatar.vrm", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": REFUSED_VRM1 });
-  const r = checkContent({ zipPath, manifest });
-  const f = r.findings.find((f2) => f2.code === CODES.E_CONTENT_LICENCE_REFUSED);
-  assert.ok(f, JSON.stringify(r.findings));
-  assert.equal(f.field, "extensions.VRMC_vrm.meta.avatarPermission");
+test("G5: the VRM usage flags are kept with the part", () => {
+  const vrm0 = makeGlb({ extensions: { VRM: { meta: {
+    allowedUserName: "Everyone", licenseName: "Redistribution_Allowed",
+    violentUssageName: "Disallow", sexualUssageName: "Disallow", commercialUssageName: "Allow",
+  } } } });
+  const r0 = checkContent({
+    zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": vrm0 }),
+    manifest: { integration: { content: [contentEntry({ licence: "CC0" })] } },
+  });
+  const fields0 = r0.content[0].vrm_licence.fields;
+  assert.equal(fields0.violentUssageName, "Disallow");
+  assert.equal(fields0.sexualUssageName, "Disallow");
+  assert.equal(fields0.commercialUssageName, "Allow");
+
+  const vrm1 = makeGlb({ extensions: { VRMC_vrm: { meta: {
+    allowRedistribution: true, avatarPermission: "everyone",
+    allowExcessivelyViolentUsage: false, allowExcessivelySexualUsage: false,
+    allowPoliticalOrReligiousUsage: true, allowAntisocialOrHateUsage: false,
+  } } } });
+  const r1 = checkContent({
+    zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": vrm1 }),
+    manifest: { integration: { content: [contentEntry({ licence: "CC0" })] } },
+  });
+  const fields1 = r1.content[0].vrm_licence.fields;
+  assert.equal(fields1.allowPoliticalOrReligiousUsage, true);
+  assert.equal(fields1.allowAntisocialOrHateUsage, false);
 });
 
-test("an absent VRM meta field is not itself a refusal", () => {
-  const noMeta = makeGlb({ asset: { version: "2.0" } });
-  const manifest = { integration: { content: [{ path: "character/avatar.vrm", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": noMeta });
+// ── "unknown" meta: flagged, never refused, and G5's declared fallback ───
+
+test("a VRM with no readable meta at all is flagged F_CONTENT_VRM_META_UNKNOWN, never refused", () => {
+  const manifest = { integration: { content: [contentEntry({ licence: "CC0" })] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": UNKNOWN_NO_META });
   const r = checkContent({ zipPath, manifest });
-  assert.deepEqual(r.findings, []);
+  assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_REFUSED));
+  assert.ok(codesOf(r).includes(CODES.F_CONTENT_VRM_META_UNKNOWN), JSON.stringify(r.findings));
   assert.equal(r.content[0].vrm_licence, undefined, "no VRM extension at all means nothing to keep");
+  assert.equal(r.content[0].licence_source, "declared", "unknown meta falls back to the manifest's own licence");
 });
+
+test("E_CONTENT_LICENCE_UNDECLARED: unknown VRM meta AND no declared licence refuses; declaring one fixes it", () => {
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": UNKNOWN_NO_META });
+  const r1 = checkContent({ zipPath, manifest: { integration: { content: [contentEntry()] } } }); // no licence key
+  assert.ok(codesOf(r1).includes(CODES.E_CONTENT_LICENCE_UNDECLARED), JSON.stringify(r1.findings));
+  assert.deepEqual(r1.content, []);
+
+  const r2 = checkContent({ zipPath, manifest: { integration: { content: [contentEntry({ licence: "All rights reserved" })] } } });
+  assert.ok(!codesOf(r2).includes(CODES.E_CONTENT_LICENCE_UNDECLARED), JSON.stringify(r2.findings));
+  assert.equal(r2.content[0].licence_source, "declared");
+  assert.equal(r2.content[0].licence, "All rights reserved");
+});
+
+test("E_CONTENT_LICENCE_UNDECLARED: a non-VRM part with no declared licence refuses; declaring one fixes it", () => {
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "audio/theme.ogg": OGG });
+  const entry = { path: "audio/theme.ogg", kind: "audio", title: "t", credit: "c" }; // no licence
+  const r1 = checkContent({ zipPath, manifest: { integration: { content: [entry] } } });
+  assert.ok(codesOf(r1).includes(CODES.E_CONTENT_LICENCE_UNDECLARED), JSON.stringify(r1.findings));
+
+  const r2 = checkContent({ zipPath, manifest: { integration: { content: [{ ...entry, licence: "CC0-1.0" }] } } });
+  assert.ok(!codesOf(r2).includes(CODES.E_CONTENT_LICENCE_UNDECLARED), JSON.stringify(r2.findings));
+  assert.equal(r2.content[0].licence_source, "declared");
+});
+
+test("a VRM part's readable licence_source is 'vrm' regardless of a declared licence", () => {
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": ALLOWED_VRM0 });
+  const r = checkContent({ zipPath, manifest: { integration: { content: [contentEntry({ licence: "irrelevant text" })] } } });
+  assert.equal(r.content[0].licence_source, "vrm");
+});
+
+// ── .astrachar: the nested body is gated the same as a bare .vrm ────────
 
 test(".astrachar: a readable bundle's body is gated the same as a bare .vrm", () => {
   const inner = makeZipBytes({
     "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
-    "models/Mira.vrm": REFUSED_VRM0,
+    "models/Mira.vrm": ONLY_AUTHOR_VRM0,
   });
   const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
   const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner });
@@ -131,7 +213,8 @@ test(".astrachar: an unreadable body is a gap (F_CONTENT_ASTRACHAR_UNREADABLE), 
   const r = checkContent({ zipPath, manifest });
   assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_REFUSED));
   assert.ok(codesOf(r).includes(CODES.F_CONTENT_ASTRACHAR_UNREADABLE), JSON.stringify(r.findings));
-  assert.equal(r.content.length, 1, "a gap still lists the part -- it just has no vrm_licence");
+  assert.equal(r.content.length, 1, "a gap still lists the part -- it just has no vrm_licence, and falls back to the declared licence");
+  assert.equal(r.content[0].licence_source, "declared");
 });
 
 test("a fully covered, all-allowed release has no findings and lists every part", () => {
@@ -143,13 +226,15 @@ test("a fully covered, all-allowed release has no findings and lists every part"
       ],
     },
   };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "art/cover.png": PNG, "character/avatar.vrm": ALLOWED_VRM });
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "art/cover.png": PNG, "character/avatar.vrm": ALLOWED_VRM0 });
   const r = checkContent({ zipPath, manifest });
   assert.deepEqual(r.findings, []);
   assert.equal(r.content.length, 2);
   const byPath = Object.fromEntries(r.content.map((c) => [c.path, c]));
   assert.equal(byPath["art/cover.png"].kind, "art");
+  assert.equal(byPath["art/cover.png"].licence_source, "declared");
   assert.equal(byPath["character/avatar.vrm"].vrm_licence.vrm_version, "0.x");
+  assert.equal(byPath["character/avatar.vrm"].licence_source, "vrm");
 });
 
 test("no [[integration.content]] table at all is not itself a problem", () => {
