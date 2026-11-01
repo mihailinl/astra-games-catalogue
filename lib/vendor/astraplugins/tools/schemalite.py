@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at a11fc44d90a1e2335a3969670749bc52a95281f3, path tools/schemalite.py.
+# VENDORED from mihailinl/AstraPlugins at 516ba38fcb30082c98ab2cb882184998690fca61, path tools/schemalite.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
