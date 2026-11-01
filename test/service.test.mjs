@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { ingestReport, ingestWork, signReport, signWork } from "../bin/service.mjs";
+import { ingestReport, ingestWork, MAX_RUN_LEASES, signReport, signWork } from "../bin/service.mjs";
 import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
   clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused, signResultBody,
@@ -67,6 +67,27 @@ test("ingest-work: a lease carrying an account, a plaintext token or a subject i
   const written = fs.readdirSync(path.join(dir, "req"));
   assert.deepEqual(written, ["games-request-L3.json"]);
   for (const f of written) assert.ok(!fs.readFileSync(path.join(dir, "req", f), "utf8").includes("minice-subject-7"));
+});
+
+test("ingest-work: at most 10 leases are written per run; the rest are warned about and left to expire", async () => {
+  // ingest.yml's matrix runs at max-parallel 5, so a cap of 10 is two waves
+  // inside the 30-minute lease. Pinned to the literal 10, not to whatever
+  // MAX_RUN_LEASES happens to hold, so a creep back up to 20 (four waves,
+  // which could outlive the lease) fails this test rather than just moving
+  // with it.
+  assert.equal(MAX_RUN_LEASES, 10);
+  const dir = tmpdir();
+  const total = 15;
+  const items = Array.from({ length: total }, (_, i) => ({ lease_id: `L${i + 1}`, repo_id: i + 1, tag: "v1", confirmed: [] }));
+  const service = fakeService({ leases: { items, poll: [] } });
+  const warned = [];
+  const log = { log() {}, warn: (m) => warned.push(m), error() {} };
+  const r = await ingestWork({ out: path.join(dir, "req"), env: ENV(dir), client: service, github: null, log });
+  assert.equal(r.leases.length, 10);
+  assert.deepEqual(r.leases, items.slice(0, 10).map((it) => it.lease_id));
+  assert.deepEqual(fs.readdirSync(path.join(dir, "req")).sort(), items.slice(0, 10).map((it) => `games-request-${it.lease_id}.json`).sort());
+  assert.equal(warned.length, total - 10, "every lease past the cap is warned about, not silently dropped");
+  assert.ok(warned.every((w) => w.includes("this run's 10")), JSON.stringify(warned));
 });
 
 test("ingest-work: polls the named repositories and registers what it found; the created leases are ingested in the same run", async () => {

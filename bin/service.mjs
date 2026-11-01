@@ -42,8 +42,15 @@ import {
 import { loadPolicy, writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
 
-/** The most leases one run ingests; a lease past it expires and is leased again. */
-export const MAX_RUN_LEASES = 20;
+/**
+ * The most leases one run ingests; a lease past it expires and is leased
+ * again. ingest.yml's matrix runs at max-parallel 5, so 10 is two waves --
+ * inside the lease's 30-minute life. 20 was four waves, and a wave's own
+ * ingest + checkout + upload time could run the fourth wave's leases past
+ * the 30 minutes they were leased for, expiring before they are ever acted
+ * on.
+ */
+export const MAX_RUN_LEASES = 10;
 
 const output = (env, pairs) => {
   if (!env.GITHUB_OUTPUT) return;
