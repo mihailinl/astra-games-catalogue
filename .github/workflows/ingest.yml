@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Minice — https://minice.ai
+#
+# Ingest ONE release into an UNSIGNED candidate (A§5.1, A§5.2; lib/ingest.mjs).
+#
+# This job reads a stranger's release, so it holds NO secret: no environment,
+# no `secrets.` reference, and a token that can only read. It cannot sign,
+# commit or push; its whole output is candidate.json, which sign.yml
+# re-validates before any key is involved. test/workflows.test.mjs fails the
+# build if any of that stops being true.
+#
+# Triggered by the plugins service (registration webhook, poll, Check now) as
+# repository_dispatch `games-release` with client_payload
+# {repo_id, tag, account?, binding_token?}, or by hand. The payload is read
+# from the event FILE by bin/ingest.mjs; nothing a dispatcher wrote is
+# interpolated into a `run:` line.
+
+name: Ingest
+
+on:
+  repository_dispatch:
+    types: [games-release]
+  workflow_dispatch:
+    inputs:
+      repo_id:
+        description: GitHub repository_id of the release's repository
+        required: true
+        type: string
+      tag:
+        description: The release tag
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  ingest:
+    name: Ingest one release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # The job's own read-only token: GitHub's API rate limit and
+      # `gh attestation verify` on a public repository. Not a signing secret.
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out the catalogue's state (data), read-only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: data
+          path: catalogue-data
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Install the pinned gi-probe (none yet; ingest then waits)
+        run: node bin/fetch-gi-probe.mjs --dir "$RUNNER_TEMP/bin"
+
+      - name: Ingest
+        run: node bin/ingest.mjs --data catalogue-data --out "$RUNNER_TEMP/out/candidate.json"
+
+      - name: Keep the candidate for the signer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: games-candidate
+          path: ${{ runner.temp }}/out/candidate.json
+          if-no-files-found: error
+          retention-days: 7

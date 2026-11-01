@@ -6,17 +6,18 @@
 // Runs in the games-signing environment, the only place the signing secrets
 // exist; reads them from the environment, never from arguments.
 //
-//   node bin/sign.mjs --data <data-branch checkout> [--candidates <dir>] [--act-event] [--health-event]
+//   node bin/sign.mjs --data <data-branch checkout> [--candidates <dir>] [--from-event]
 //
 //   --candidates   a directory of candidate JSON files (ingest's artifact)
-//   --act-event    $GITHUB_EVENT_PATH is a repository_dispatch `games-act`:
-//                  its client_payload.act is one moderator act
-//   --health-event $GITHUB_EVENT_PATH is a repository_dispatch `games-health`:
-//                  its client_payload.health holds the plugins service's counts
+//   --from-event   read $GITHUB_EVENT_NAME and $GITHUB_EVENT_PATH: a
+//                  repository_dispatch `games-act` carries one moderator act
+//                  in client_payload.act; `games-health` carries the plugins
+//                  service's counts in client_payload.health
 //
 // Payloads are read from the event FILE; nothing a dispatcher wrote is ever
-// interpolated into a shell. Prints a one-line JSON report; exits 3 when an
-// act was refused (after writing everything else), 1 when the run broke.
+// interpolated into a shell. Prints a one-line JSON report and writes
+// `refused_acts` to $GITHUB_OUTPUT (sign.yml fails the run on it AFTER the
+// rest is committed); exits 1 when the run itself was refused.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -33,17 +34,21 @@ function readCandidates(dir) {
   return fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")));
 }
 
-function eventPayload() {
+/** {acts, health} from a repository_dispatch event; nothing for any other event. */
+function fromEvent() {
+  if (process.env.GITHUB_EVENT_NAME !== "repository_dispatch") return { acts: [], health: undefined };
   const file = process.env.GITHUB_EVENT_PATH;
   if (!file) throw new Error("GITHUB_EVENT_PATH is not set");
-  return JSON.parse(fs.readFileSync(file, "utf8"))?.client_payload ?? {};
+  const event = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (event.action === "games-act") return { acts: [event.client_payload?.act], health: undefined };
+  if (event.action === "games-health") return { acts: [], health: event.client_payload?.health };
+  throw new Error(`repository_dispatch ${JSON.stringify(event.action)} is not an event this signer reads`);
 }
 
 try {
   const data = opt("--data");
-  if (!data) throw new Error("usage: bin/sign.mjs --data <dir> [--candidates <dir>] [--act-event] [--health-event]");
-  const acts = has("--act-event") ? [eventPayload().act] : [];
-  const health = has("--health-event") ? eventPayload().health : undefined;
+  if (!data) throw new Error("usage: bin/sign.mjs --data <dir> [--candidates <dir>] [--from-event]");
+  const { acts, health } = has("--from-event") ? fromEvent() : { acts: [], health: undefined };
   const report = runSign({
     dataDir: data,
     root: ROOT,
@@ -57,7 +62,7 @@ try {
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `issued_at=${report.issuedAt}\nkey_id=${report.keyId}\nrefused_acts=${report.refusedActs.length}\n`);
   }
-  process.exit(report.refusedActs.length ? 3 : 0);
+  for (const r of report.refusedActs) console.error(`act refused: ${r.type}: ${r.problems.join("; ")}`);
 } catch (e) {
   console.error(`sign refused: ${e.message}`);
   process.exit(1);

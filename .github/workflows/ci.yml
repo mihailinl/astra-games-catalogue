@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Minice — https://minice.ai
+#
+# Tests and canaries. No secret, read-only token, safe for pull requests
+# from forks.
+#
+#   tests  node --test (ingest, signing, acts, workflows, the S goldens)
+#   K9     the vendored provenance files equal astra-registry at the pin, and
+#          upstream bot/lib has not changed them since (A§5.1)
+#   K12    the vendored schemas, schemalite and goldens equal AstraPlugins at
+#          the pin, and upstream has not changed them since
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 5 * * *"   # the upstream half of K9/K12 changes without a push here
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - run: node --test
+
+  vendored:
+    name: K9 and K12 (vendored files equal their pins)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mihailinl/astra-registry
+          path: upstream/astra-registry
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mihailinl/AstraPlugins
+          path: upstream/astraplugins
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: K9
+        run: node bin/check-vendored.mjs --upstream astra-registry --checkout upstream/astra-registry --watch
+      - name: K12 (schema half)
+        run: node bin/check-vendored.mjs --upstream astraplugins --checkout upstream/astraplugins --watch

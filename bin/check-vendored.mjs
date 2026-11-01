@@ -6,7 +6,7 @@
 // commit, and upstream has not changed them since.
 //
 //   node bin/check-vendored.mjs --upstream astra-registry --checkout <clone> [--upstream-ref origin/main]
-//   node bin/check-vendored.mjs --upstream astraplugins --checkout <clone>
+//   node bin/check-vendored.mjs --upstream astraplugins --checkout <clone> --watch   (upstream ref = origin/<the pin's watch branch>)
 //   node bin/check-vendored.mjs --vendor astra-registry --checkout <clone>   (re-vendor at the pin)
 
 import { checkVendored, PINS, vendorFrom } from "../lib/vendored.mjs";
@@ -32,7 +32,8 @@ if (vendor) {
 const upstreams = opt("--upstream") ? [opt("--upstream")] : Object.keys(PINS);
 let bad = 0;
 for (const upstream of upstreams) {
-  const problems = checkVendored({ upstream, checkout, upstreamRef: opt("--upstream-ref") });
+  const upstreamRef = opt("--upstream-ref") ?? (args.includes("--watch") ? `origin/${PINS[upstream].watch}` : null);
+  const problems = checkVendored({ upstream, checkout, upstreamRef });
   for (const p of problems) console.error(`FAIL  ${p}`);
   if (!problems.length) console.log(`ok    ${upstream} equals ${PINS[upstream].repo}@${PINS[upstream].sha}${checkout ? "" : " (headers only)"}`);
   bad += problems.length;

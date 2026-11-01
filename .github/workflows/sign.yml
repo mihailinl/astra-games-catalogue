@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Minice — https://minice.ai
+#
+# Sign both documents (A§5.1; lib/pipeline.mjs). One run:
+#   - accepts the candidate a successful Ingest run produced (workflow_run),
+#   - or applies ONE moderator act (repository_dispatch `games-act`, sent by
+#     the plugins service after the moderator's console 2FA) — the acts path,
+#   - or takes the plugins service's health counts (`games-health`),
+# and in every case re-signs BOTH astra.games.index/1 and
+# astra.games.withdrawn/1, self-verifies them, and pushes the state and the
+# documents to the `data` branch.
+#
+# The signing secrets exist only in the `games-signing` environment, whose
+# deployment branch policy allows the default branch only; they are named
+# here and in resign.yml and nowhere else (test/workflows.test.mjs). The
+# candidate is data from a job that read a stranger's release: it is re-
+# validated against the schema and the catalogue's state, and no zip is
+# opened here. Event payloads are read from the event file by bin/sign.mjs.
+
+name: Sign
+
+on:
+  workflow_run:
+    workflows: [Ingest]
+    types: [completed]
+  repository_dispatch:
+    types: [games-act, games-health]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: games-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign both documents
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: games-signing
+    permissions:
+      contents: write   # push the data branch
+      actions: read     # download the Ingest run's artifact
+    outputs:
+      issued_at: ${{ steps.sign.outputs.issued_at }}
+      key_id: ${{ steps.sign.outputs.key_id }}
+      data_sha: ${{ steps.push.outputs.data_sha }}
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out the catalogue's state (data)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: data
+          path: catalogue-data
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Fetch the candidate from the Ingest run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: games-candidate
+          path: ${{ runner.temp }}/candidates
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Sign
+        id: sign
+        env:
+          GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
+          GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
+        run: node bin/sign.mjs --data catalogue-data --candidates "$RUNNER_TEMP/candidates" --from-event
+
+      - name: Push the state and the documents to `data`
+        id: push
+        env:
+          ISSUED_AT: ${{ steps.sign.outputs.issued_at }}
+          KEY_ID: ${{ steps.sign.outputs.key_id }}
+        run: |
+          set -euo pipefail
+          cd catalogue-data
+          git config user.name "astra-games-catalogue"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "sign: issued_at $ISSUED_AT under $KEY_ID"
+          git push -q origin HEAD:data
+          echo "data_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Fail the run when an act was refused (after everything else landed)
+        if: steps.sign.outputs.refused_acts != '0'
+        run: |
+          echo "a moderator act was refused; see the Sign step's log"
+          exit 1
+
+  notify:
+    name: Wake the plugins service
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write   # an OIDC token whose audience the service pins; no secret
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Notify
+        env:
+          GAMES_NOTIFY_URL: ${{ vars.GAMES_NOTIFY_URL }}
+          GAMES_NOTIFY_AUDIENCE: ${{ vars.GAMES_NOTIFY_AUDIENCE }}
+          ISSUED_AT: ${{ needs.sign.outputs.issued_at }}
+          KEY_ID: ${{ needs.sign.outputs.key_id }}
+          DATA_SHA: ${{ needs.sign.outputs.data_sha }}
+        run: node bin/notify.mjs

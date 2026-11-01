@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Minice — https://minice.ai
+#
+# The daily re-sign (A§5.3: "re-signed daily and on every change"). A copy
+# expires 7 days after issue and clients stop new installs and updates on an
+# expired copy, so both documents are re-signed every day, well before
+# expiry, whether or not anything changed; takedowns the 24-hour bound held
+# are admitted on the way. Same environment and secrets as sign.yml, and the
+# same concurrency group, so the two never race on the `data` branch.
+
+name: Resign
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: games-signing
+  cancel-in-progress: false
+
+jobs:
+  resign:
+    name: Re-sign both documents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: games-signing
+    permissions:
+      contents: write   # push the data branch
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out the catalogue's state (data)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: data
+          path: catalogue-data
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Re-sign
+        id: sign
+        env:
+          GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
+          GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
+        run: node bin/resign.mjs --data catalogue-data
+
+      - name: Push the documents to `data`
+        env:
+          ISSUED_AT: ${{ steps.sign.outputs.issued_at }}
+          KEY_ID: ${{ steps.sign.outputs.key_id }}
+        run: |
+          set -euo pipefail
+          cd catalogue-data
+          git config user.name "astra-games-catalogue"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "resign: issued_at $ISSUED_AT under $KEY_ID"
+          git push -q origin HEAD:data

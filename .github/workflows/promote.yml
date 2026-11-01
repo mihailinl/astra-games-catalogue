@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Minice — https://minice.ai
+#
+# Make the first-party repositories' GitHub releases agree with the SIGNED
+# documents (A§5.1 promote.yml; A§4.4 M7; lib/promote.mjs): a first-party
+# release the index lists becomes stable, one a revoke covers goes back to
+# prerelease. It runs after a successful Sign, verifies both documents'
+# signatures against keys.json before acting, and never signs.
+#
+# Its token is a GitHub App's, minted per run, limited to contents:write on
+# the first-party repositories; the App's private key is in the
+# `first-party-promote` environment. No signing secret is here.
+
+name: Promote
+
+on:
+  workflow_run:
+    workflows: [Sign]
+    types: [completed]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: games-promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote and demote first-party releases
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: first-party-promote
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the catalogue's code (main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out the signed documents (data)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: data
+          path: catalogue-data
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - name: Mint the first-party App token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.PROMOTE_APP_ID }}
+          private-key: ${{ secrets.PROMOTE_APP_PRIVATE_KEY }}
+          owner: mihailinl
+          repositories: astra-bepinex,astra-reshade,astra-lethal,astra-peak,astra-content-warning,astra-repo,astra-gta-trilogy,astra-in-death-stranding
+          permission-contents: write
+
+      - name: Promote and demote
+        env:
+          GH_APP_TOKEN: ${{ steps.app.outputs.token }}
+        run: node bin/promote.mjs --data catalogue-data --apply
