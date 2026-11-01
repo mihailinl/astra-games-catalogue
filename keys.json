@@ -1,0 +1,9 @@
+{
+  "$comment": "The games catalogue's two signing keys, PUBLIC halves only (A§5.4; merged R11). Clients compile both; canary K14 holds the compiled ids and keys equal to this file, and the signer refuses to sign with a key this file does not publish (E_KEY_NOT_PUBLISHED). The private halves live in /mnt/Storage/Minice/Keys/games-{current,next}.ed25519 (0600) and, for current only, in the games-signing environment as GAMES_SIGNING_KEY_CURRENT. Generate with `node bin/keygen.mjs --out <file>` and paste the printed row here.",
+  "schema": "astra.games.keys/1",
+  "status": "unprovisioned",
+  "keys": [
+    { "key_id": "games-current", "public_key": null },
+    { "key_id": "games-next", "public_key": null }
+  ]
+}
