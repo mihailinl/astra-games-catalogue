@@ -616,3 +616,25 @@ test("#129 254e60b: the slow sniff reads at most the release budget, then the as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("#129 3dac90f: a large entry beginning FF FE is never decoded whole by the bridge", () => {
+  const { files } = releaseGolden("pak-utf16-bom"); // 32 MiB, FF FE then lone surrogates
+  const dir = tmpdir("agc-pak-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    // around the sniff alone: verify_zip_headers inflates every entry to check its CRC, by design
+    const r = pyBridge([
+      "import tracemalloc, zipfile",
+      `z = zipfile.ZipFile(${JSON.stringify(zipPath)}); info = z.getinfo("data/level.pak")`,
+      "head = z.open(info).read(64)",
+      "tracemalloc.start()",
+      "why = sc.name_problem(z, info, head, None, sc.ReleaseBudget())",
+      "print(json.dumps({'peak': tracemalloc.get_traced_memory()[1], 'why': why}))",
+    ].join("\n"));
+    assert.equal(r.why, null);
+    assert.ok(r.peak < 8 * 1024 * 1024, `${r.peak} bytes traced for a test of the first character`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
