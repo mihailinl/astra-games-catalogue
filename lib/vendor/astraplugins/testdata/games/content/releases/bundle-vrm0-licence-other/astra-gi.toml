@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at db897a761cf679add047c989abf316b8bacc03b2, path testdata/games/content/releases/bundle-vrm0-licence-other/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/bundle-vrm0-licence-other/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: the content catalogue's vrm0-licence-other.astrachar, byte for byte --
