@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { ingestReport, ingestWork, MAX_RUN_LEASES, signReport, signWork } from "../bin/service.mjs";
 import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
-  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused, signResultBody,
+  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { tmpdir } from "./helpers.mjs";
 
@@ -291,4 +291,15 @@ test("sign-report: posts the result, wakes the service, and fails only after bot
   const noWake = fakeService({ signResults: {}, signedWake: new Error("ECONNREFUSED") });
   assert.deepEqual((await signReport({ reportFile: write(REPORT), env, client: noWake, log: quiet })).failed, [], "a failed wake is not a failed signing");
   await assert.rejects(signReport({ reportFile: write(REPORT), env: { ...env, DATA_SHA: "" }, client: ok, log: quiet }), /DATA_SHA/);
+});
+
+test("sign-result: an accepted item that names no lease is left out, so one unreadable candidate cannot void the whole result (BOT-96)", () => {
+  const report = { ...REPORT, accepted: [
+    { request: { lease_id: "L1", repo_id: 1, tag: "v1" }, result: "listed", reason: "listed" },
+    { request: null, result: "refused", reason: "the candidate could not be read" },
+    { request: { repo_id: 2, tag: "v2" }, result: "refused", reason: "no lease named" },
+  ] };
+  const body = signResultBody({ runId: "556", dataSha: "e".repeat(40), report });
+  assert.deepEqual(body.accepted.map((a) => a.request.lease_id), ["L1"]);
+  assert.equal(signUnnamed(report), 2);
 });
