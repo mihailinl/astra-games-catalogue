@@ -324,19 +324,15 @@ class _AnyFile:
 
 
 def gltf_uri_problem(raw: bytes, doc: dict, path, present) -> str | None:
-    """No external reference: the content catalogue's own `uri_refusal`. In
-    a GLB every `images[].uri` and `buffers[].uri` is a `data:` URI; in a
-    `.gltf` a `data:` URI or a relative path with no scheme, no `..`, no
-    leading `/` and no `%`, `?`, `#` or `\\` -- a loader percent-decodes
-    before it joins, so `..%2f..%2fetc%2fpasswd` leaves the release even
-    beside a file of that literal name (N2) -- naming a file the release
-    holds. No own-part test: a game integration's part is one file. An
-    `images`/`buffers` that is not an array is refused first (content's
-    reader skips an object, whose "0" key a JavaScript loader still reads,
-    and raises on a number)."""
-    for key in ("images", "buffers"):
-        if key in doc and not isinstance(doc[key], list):
-            return f"{key} is not an array: {type(doc[key]).__name__}"
+    """No external reference: the content catalogue's own `uri_refusal`
+    (with AstraPlugins #131). In a GLB every `images[].uri` and
+    `buffers[].uri` is a `data:` URI; in a `.gltf` a `data:` URI or a
+    relative path, percent-decoded exactly once -- `Base%20Color.png` names
+    `Base Color.png` -- with no raw `?`, `#` or `\\`, no malformed or double
+    escape, and once decoded no scheme, no `..` and no leading `/`, naming a
+    file the release holds. `images`/`buffers` must be arrays of objects
+    (content's `gltf_array_shape_refusal`, which replaced the guard this
+    file kept). No own-part test: a game integration's part is one file."""
     where = present if present is not None and path is not None else _AnyFile()
     return CG.uri_refusal(path or "", raw, where, {})
 
