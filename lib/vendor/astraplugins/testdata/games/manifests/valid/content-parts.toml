@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/manifests/valid/content-parts.toml.
+# VENDORED from mihailinl/AstraPlugins at db52804689bb7ed785c67cac9dc31b15da590477, path testdata/games/manifests/valid/content-parts.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Valid: [[integration.content]] declaring the GI's own non-built-in
