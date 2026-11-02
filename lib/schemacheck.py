@@ -572,12 +572,15 @@ def vrm_gate(raw, path=None, present=None):
 # .vrm/.glb/.vrma, a text glTF under any name but .gltf (the content
 # catalogue's own `is_gltf_json`), or a bundle -- a zip whose last entry is
 # astrachar.json, by content's own `walk_zip` -- under any name but
-# .astrachar/.astrapack is E_CONTENT_FORMAT. Two deliberate differences from
-# the content catalogue, because a game integration ships arbitrary files: a
-# UTF-16/32 byte-order mark is not refused (localisation files carry one) --
-# such a text is sniffed as what it decodes to -- and above 16 MiB a
-# JSON-looking file is refused only when its bytes name an `asset` key,
-# plainly or \u-escaped, read in chunks instead of the per-character sniff.
+# .astrachar/.astrapack is E_CONTENT_FORMAT. Three deliberate differences
+# from the content catalogue, because a game integration ships arbitrary
+# files: a glTF's top-level asset is an object (three.js reads asset.version);
+# a UTF-16/32 byte-order mark is not refused (localisation files carry one) --
+# such a text is sniffed as what it decodes to, which only over-refuses
+# (three.js and fetch().text() decode UTF-8 whatever the mark); and the
+# per-character sniff is bounded -- an asset key with an object value is
+# looked for first at C speed, the sniff reads at most 64 MiB per release,
+# and above 16 MiB (or past that budget) the key alone refuses.
 
 BUNDLE_EXTS = (".astrachar", ".astrapack")
 _BOM_CODECS = dict(zip(CG.UNICODE_BOMS, ("utf-32-be", "utf-32-le", "utf-16-le", "utf-16-be")))
@@ -598,7 +601,11 @@ def _bom_of(raw: bytes):
 
 
 def sniff_text(raw: bytes) -> bytes:
-    """The UTF-8 text a BOM-honouring reader (fetch().text()) sees."""
+    """The text decoded by its byte-order mark, as UTF-8. Sniffing that only
+    ever over-refuses: a browser's fetch().text() and three.js decode UTF-8
+    whatever the mark, so a UTF-16 glTF does not load there at all; the margin
+    covers a reader that does detect the encoding (Python's json.loads on
+    bytes does) -- AstraPlugins #129 e72b05d corrected this rationale."""
     bom, codec = _bom_of(raw)
     return raw[len(bom):].decode(codec, "replace").encode("utf-8") if codec else raw
 
