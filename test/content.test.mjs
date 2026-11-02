@@ -498,6 +498,21 @@ for (const name of Object.keys(RELEASES)) {
     assert.deepEqual(refusalsOf(r), v.verdict === "refuse" ? [v.code] : [], JSON.stringify(r.findings));
     if (v.detail) assert.ok(r.findings.some((f) => f.message.includes(v.detail)), `no finding names "${v.detail}": ${JSON.stringify(r.findings)}`);
     assert.deepEqual(flagsOf(r), [...(v.flags ?? [])].sort(), JSON.stringify(r.findings));
+    if (v.guard === "strict_json") {
+      // content's gltf_problem meets a too-deep JSON first and catches its RecursionError, so the
+      // verdict above cannot see this bridge's own guard: run each .gltf through _strict_json alone
+      for (const [rel, bytes] of Object.entries(files).filter(([f]) => f.endsWith(".gltf"))) {
+        const got = pyBridge([
+          "data = sys.stdin.buffer.read()",
+          "try:",
+          "    sc._strict_json(data); out = 'parsed'",
+          "except sc.GltfFormatError: out = 'refused'",
+          "except RecursionError: out = 'RecursionError'",
+          "print(json.dumps(out))",
+        ].join("\n"), bytes);
+        assert.equal(got, "refused", `${rel} through _strict_json alone`);
+      }
+    }
   });
 }
 
