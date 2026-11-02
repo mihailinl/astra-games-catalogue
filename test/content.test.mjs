@@ -531,11 +531,14 @@ test("#129 rule 1: a UTF-16 localisation file passes, the same encoding of a glT
   assert.deepEqual(refusalsOf(runGolden(bad.files, bad.manifest)), [CODES.E_CONTENT_FORMAT]);
 });
 
-test("#129 rule 2: a .gltf uri with %2f is refused even beside a file of that literal name", () => {
+test("#129 rule 2: a .gltf uri is decoded once -- %2f climbs out beside its literal file, %20 names a space", () => {
+  // AstraPlugins #131 / #129 cd67bb3: the code is pinned, never content's wording
   const { files, manifest } = releaseGolden("gltf-uri-percent");
   assert.ok(Object.keys(files).some((f) => f.includes("%2f")), "the literal file is in the release");
-  const r = runGolden(files, manifest);
-  assert.ok(r.findings.some((f) => f.code === CODES.E_CONTENT_FORMAT && f.message.includes("'%'")), JSON.stringify(r.findings));
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  const space = releaseGolden("gltf-uri-space-encoded");
+  assert.ok(Object.keys(space.files).includes("models/data/Base Color.bin"));
+  assert.deepEqual(refusalsOf(runGolden(space.files, space.manifest)), [], "Base%20Color.bin names the present file");
 });
 
 test("#129 rule 3: two 11 MiB GLBs fit the release's 32 MiB of glTF JSON, three do not", () => {
@@ -587,7 +590,26 @@ test("#129 rule 4: a bundle the content contract cannot read is refused with its
     "zipfile's default mode has no file-type bits: content's step 3 reads it as not a regular file");
   const shape = bundleZip({ "astrachar.json": "[]" });
   const r2 = runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": shape }, manifest);
-  assert.deepEqual(refusalsOf(r2), [CODES.E_CONTENT_FORMAT], "content's reader raises on an array manifest; this refuses");
+  assert.deepEqual(refusalsOf(r2), [CODES.E_BUNDLE_MANIFEST], "since #131 content refuses an array manifest itself");
+});
+
+test("#129 db897a7: a bundle shape content's reader raises on is refused E_CONTENT_FORMAT, never a crash", () => {
+  const { files, manifest } = releaseGolden("bundle-model-aiko");
+  const dir = tmpdir("agc-raise-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      "def raises(raw, ctx):",
+      "    raise TypeError('a shape the content checker does not handle')",
+      "sc.CG.ingest_bundle = raises",
+      `rep = sc.content_report(${JSON.stringify(zipPath)}, json.loads(sys.stdin.read()))`,
+      "print(json.dumps(rep['bundle_refusals']))",
+    ].join("\n"), JSON.stringify(manifest.integration.content));
+    assert.deepEqual(r.map((x) => x.code), [CODES.E_CONTENT_FORMAT], JSON.stringify(r));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("#129 rule 4: a valid bundle's body licence is the part's licence, and an Unknown inside is flagged", () => {

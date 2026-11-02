@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 8f19c815100e5562313ea491693e83215110e10a, path testdata/games/content/releases/json-nested-asset/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at db897a761cf679add047c989abf316b8bacc03b2, path testdata/games/content/releases/json-nested-asset/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: a JSON config whose NESTED object has an asset key -- accepted: the
