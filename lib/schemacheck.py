@@ -705,6 +705,110 @@ def name_problem(z, info, head: bytes, raw, budget=None) -> str | None:
     return None
 
 
+# ── a game's own archives, one level deep (manifest.md §2.7.1, AstraPlugins #129 f3e2bd0) ──
+# A zip that is not a content bundle -- a .jar, a mod .zip, by its PK magic and
+# never by its name -- is opened ONE level deep with the content contract's own
+# walk_zip, every cloak check included, under game-archive limits (65,536
+# entries, 512 MiB uncompressed, no Stored-only rule). Every GLB, text glTF and
+# bundle in it is judged exactly as a top-level entry is, and is a part to
+# DECLARE as `<archive path>!<inner path>`. Cloaking is refused; anything else
+# that stops the walk publishes flagged F_CONTENT_ARCHIVE_UNSCANNED, and so
+# does an archive inside an archive.
+
+CONTAINER_MAX_ENTRIES = 65_536
+CONTAINER_MAX_TOTAL = 512 * 1024 * 1024
+CLOAK_CODES = ("E_ZIP_HEADERS_INCONSISTENT", "E_ZIP_END_RECORD")
+INNER_PART_EXTS = CG.GLB_EXTS + (".gltf",) + BUNDLE_EXTS
+_HEAD = 64
+
+
+def _decoded_chunks(raw: bytes, size: int):
+    """In-memory bytes as UTF-8 text a piece at a time: a UTF-16/32 text
+    decoded by its byte-order mark, anything else as it is -- never whole."""
+    bom, codec = _bom_of(raw)
+    if codec is None:
+        for at in range(0, len(raw), size):
+            yield raw[at:at + size]
+        return
+    dec = codecs.getincrementaldecoder(codec)("replace")
+    for at in range(len(bom), len(raw), size):
+        yield dec.decode(raw[at:at + size]).encode("utf-8")
+    yield dec.decode(b"", final=True).encode("utf-8")
+
+
+def _first_char_bytes(raw: bytes) -> bytes:
+    first = True
+    for piece in _decoded_chunks(raw, _HEAD):
+        if first and piece.startswith(CG.UTF8_BOM):
+            piece = piece[len(CG.UTF8_BOM):]
+        first = first and not piece
+        rest = piece.lstrip(b" \t\r\n")
+        if rest:
+            return rest[:1]
+    return b""
+
+
+def _names_key_bytes(raw: bytes, pattern) -> bool:
+    if _bom_of(raw)[1] is None:
+        return pattern.search(raw) is not None
+    tail = b""
+    for piece in _decoded_chunks(raw, _STREAM_CHUNK):
+        window = tail + piece
+        if pattern.search(window):
+            return True
+        tail = window[-4096:]
+    return False
+
+
+def name_problem_bytes(key: str, raw: bytes, budget) -> str | None:
+    """name_problem for in-memory bytes (an archive's member): the same rules,
+    reading only as much of the text as each needs."""
+    low = key.lower()
+    if raw[:4] == CG.GLB_MAGIC:
+        return None if CG.name_matches_magic(key, raw) else "a GLB (it begins with glTF) named something not .vrm, .glb or .vrma"
+    if not low.endswith(".gltf") and _first_char_bytes(raw) == b"{" and _names_key_bytes(raw, _ASSET_KEY):
+        if len(raw) > CG.MAX_GLTF_JSON:
+            return f"a JSON text over 16 MiB ({len(raw)} bytes) that names an asset key, named something not .gltf"
+        if is_text_gltf(raw, budget):
+            return "a text glTF (a JSON object with a top-level asset member) named something not .gltf"
+    if _is_zip(raw[:4]) and not low.endswith(BUNDLE_EXTS) and is_bundle_bytes(raw):
+        return "a content bundle (a zip whose last entry is astrachar.json) named something not .astrachar or .astrapack"
+    return None
+
+
+def walk_container(raw: bytes) -> dict:
+    """{"status": "ok", "files"} | {"status": "unscanned", "reason"} |
+    {"status": "refused", "code", "detail"}: content's walk_zip under the
+    game-archive limits. Only cloaking, an archive the reader cannot follow,
+    and a glTF JSON total over 32 MiB refuse."""
+    saved = CG.MAX_ENTRIES, CG.MAX_TOTAL, CG.STORED_ONLY
+    CG.MAX_ENTRIES, CG.MAX_TOTAL, CG.STORED_ONLY = CONTAINER_MAX_ENTRIES, CONTAINER_MAX_TOTAL, ()
+    try:
+        files = CG.walk_zip(raw)
+    except CG.Refusal as r:
+        if r.code in CLOAK_CODES and "zip64" not in r.detail:
+            return {"status": "refused", "code": r.code, "detail": r.detail}
+        if r.code == "E_ARCHIVE_TOO_LARGE" and "glTF JSON" in r.detail:
+            return {"status": "refused", "code": "E_CONTENT_FORMAT", "detail": r.detail}
+        return {"status": "unscanned", "reason": f"{r.code}: {r.detail}"}
+    except Exception as e:  # noqa: BLE001 -- an archive content's reader cannot follow: fail closed
+        return {"status": "refused", "code": "E_CONTENT_FORMAT", "detail": f"the archive cannot be read ({type(e).__name__}: {e})"}
+    finally:
+        CG.MAX_ENTRIES, CG.MAX_TOTAL, CG.STORED_ONLY = saved
+    files.pop("\0order", None)
+    return {"status": "ok", "files": {p: b for p, b in files.items() if not p.endswith("/")}}
+
+
+def _content_typed_bytes(key: str, raw: bytes) -> bool:
+    sniff = CONTENT_EXT_MAGIC.get(pathlib.PurePosixPath(key).suffix.lower())
+    return sniff is not None and sniff(raw[:32])
+
+
+def is_inner_part(key: str, raw: bytes) -> bool:
+    """A GLB, a .gltf or a bundle inside an archive: a part to declare."""
+    return key.lower().endswith(INNER_PART_EXTS) and _content_typed_bytes(key, raw)
+
+
 # ── an embedded .astrachar / .astrapack (manifest.md §2.7.3) ──────────────
 # Judged by the content contract's OWN `ingest_bundle`: walk_zip and
 # ingest-v1.md §3 steps 1-8, 10, 11 and step 12's every-file-in-a-part rule.
@@ -1167,6 +1271,10 @@ def content_report(zip_path, declared):
     parts_by_path = {}
     format_refusals = []
     format_paths = set()
+    archives = []
+    archives_unscanned = []
+    archive_refusals = []
+    present_of = {}  # an archive member's siblings, for its .gltf's relative uris
 
     def format_refuse(path, detail):
         if path not in format_paths:
@@ -1217,6 +1325,49 @@ def content_report(zip_path, declared):
                 why = gltf_format_problem(data, name, present) if data is not None else "unreadable"
                 if why:
                     format_refuse(name, why)
+                continue
+            if _is_zip(head[:4]) and not name.lower().endswith(BUNDLE_EXTS):
+                archives.append(info)
+        # a game's own archives, one level deep, after every top-level entry is
+        # summed into the budget (AstraPlugins #129 f3e2bd0)
+        for info in archives:
+            name = info.filename
+            if info.file_size > CONTAINER_MAX_TOTAL:
+                archives_unscanned.append({"path": name, "reason": f"{info.file_size} bytes, over {CONTAINER_MAX_TOTAL}"})
+                continue
+            raw = _read_whole(z, info, CONTAINER_MAX_TOTAL)
+            if raw is None or is_bundle_bytes(raw):
+                continue  # a renamed bundle was refused above by its name
+            walked = walk_container(raw)
+            if walked["status"] == "refused":
+                archive_refusals.append({"path": name, "code": walked["code"], "detail": walked["detail"]})
+                continue
+            if walked["status"] == "unscanned":
+                archives_unscanned.append({"path": name, "reason": walked["reason"]})
+                continue
+            inner = {f"{name}!{q}": d for q, d in walked["files"].items()}
+            own = sum(CG.gltf_json_bytes(k, d[:16], len(d)) for k, d in inner.items())
+            if budget.gltf_json + own > CG.MAX_GLTF_JSON_TOTAL:
+                format_refuse(name, f"{budget.gltf_json + own} bytes of glTF JSON in the release with this archive, "
+                                    f"over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
+                continue
+            budget.gltf_json += own
+            inner_present = set(inner)
+            for k, d in sorted(inner.items()):
+                if k in present:  # a top-level entry literally named like this member
+                    format_refuse(k, "a file named like a member of an archive beside it")
+                    continue
+                why = name_problem_bytes(k, d, budget) or gltf_format_problem(d, k, inner_present)
+                if why:
+                    format_refuse(k, why)
+                    continue
+                if _is_zip(d[:4]) and not k.lower().endswith(BUNDLE_EXTS):
+                    archives_unscanned.append({"path": k, "reason": "an archive inside an archive: opened one level deep"})
+                    continue
+                if is_inner_part(k, d):
+                    content_files.append(k)
+                    parts_by_path[k] = {"sha256": hashlib.sha256(d).hexdigest(), "raw": d, "gate": None}
+                    present_of[k] = inner_present
         if budget.gltf_json > CG.MAX_GLTF_JSON_TOTAL:
             format_refuse("", f"{budget.gltf_json} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
 
@@ -1246,7 +1397,7 @@ def content_report(zip_path, declared):
             if doc is not None:
                 cls = gltf_class(doc)
                 if cls == "avatar" or (cls == "plain" and entry.get("kind") == "character"):
-                    parts_by_path[path]["gate"] = vrm_gate(raw, path, present)
+                    parts_by_path[path]["gate"] = vrm_gate(raw, path, present_of.get(path, present))
 
         for info_dict in parts_by_path.values():
             info_dict.pop("raw", None)
@@ -1320,6 +1471,8 @@ def content_report(zip_path, declared):
         "licence_undeclared": licence_undeclared,
         "format_refusals": format_refusals,
         "bundle_refusals": bundle_refusals,
+        "archive_refusals": archive_refusals,
+        "archives_unscanned": archives_unscanned,
     }
 
 
