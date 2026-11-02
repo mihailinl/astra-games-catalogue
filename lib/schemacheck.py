@@ -598,13 +598,36 @@ def sniff_text(raw: bytes) -> bytes:
     return raw[len(bom):].decode(codec, "replace").encode("utf-8") if codec else raw
 
 
-def is_text_gltf(raw: bytes) -> bool:
-    """The content catalogue's own text-glTF sniff over the decoded text, and
-    the cheap asset-key test above 16 MiB."""
+# The per-character sniff reads at most this much of one release; past it, a
+# JSON-looking file whose bytes name an asset key is refused unread, as one
+# over 16 MiB is (AstraPlugins #129 254e60b: twenty 16 MiB files of
+# {"":0,"":0,...} held the gate for 102 s; content's sniff reads ~4 MiB/s).
+SNIFF_BUDGET = 64 * 1024 * 1024
+
+
+class ReleaseBudget:
+    """What one release may make the gate spend: the bytes the per-character
+    sniff reads (SNIFF_BUDGET)."""
+
+    def __init__(self):
+        self.sniffed = 0
+
+
+def is_text_gltf(raw: bytes, budget=None) -> bool:
+    """The content catalogue's own text-glTF sniff over the decoded text.
+    First the C-speed test: no asset key anywhere (plain or \\u-escaped) is no
+    glTF, and the slow sniff never runs. Above 16 MiB, or once the release's
+    SNIFF_BUDGET is spent, the key alone refuses."""
     text = sniff_text(raw)
+    body = text[len(CG.UTF8_BOM):] if text.startswith(CG.UTF8_BOM) else text
+    if body.lstrip(b" \t\r\n")[:1] != b"{" or _ASSET_KEY.search(body) is None:
+        return False
     if len(raw) > CG.MAX_GLTF_JSON:
-        body = text[len(CG.UTF8_BOM):] if text.startswith(CG.UTF8_BOM) else text
-        return body.lstrip(b" \t\r\n")[:1] == b"{" and _ASSET_KEY.search(body) is not None
+        return True
+    budget = budget if budget is not None else ReleaseBudget()
+    if budget.sniffed + len(text) > SNIFF_BUDGET:
+        return True
+    budget.sniffed += len(text)
     return CG.is_gltf_json(text)
 
 
@@ -657,7 +680,7 @@ def _read_whole(z, info, cap):
     return raw if len(raw) <= cap else None
 
 
-def name_problem(z, info, head: bytes, raw) -> str | None:
+def name_problem(z, info, head: bytes, raw, budget=None) -> str | None:
     """Why an entry's name and its bytes disagree (E_CONTENT_FORMAT), or None.
     `head` is its first bytes; `raw` its whole bytes when already read."""
     name = info.filename
@@ -670,7 +693,7 @@ def name_problem(z, info, head: bytes, raw) -> str | None:
                 return f"a JSON text over 16 MiB ({info.file_size} bytes) that names an asset key, named something not .gltf"
         else:
             data = raw if raw is not None else _read_whole(z, info, CG.MAX_GLTF_JSON)
-            if data is not None and is_text_gltf(data):
+            if data is not None and is_text_gltf(data, budget):
                 return "a text glTF (a JSON object with a top-level asset member) named something not .gltf"
     if _is_zip(head[:4]) and not low.endswith(BUNDLE_EXTS) and info.file_size <= ASTRACHAR_CAP \
             and _stream_search(z, info, _BUNDLE_MANIFEST_NAME, decode=False):
@@ -1126,7 +1149,8 @@ def content_report(zip_path, declared):
         # Every file path in the release zip (not only the content-typed
         # ones): what a `.gltf`'s plain relative buffer/image uri may name.
         present = {i.filename for i in infos}
-        budget = 0
+        gltf_total = 0
+        budget = ReleaseBudget()
         for info in infos:
             name = info.filename
             if name == MANIFEST_NAME:
@@ -1141,7 +1165,7 @@ def content_report(zip_path, declared):
                 continue
             # the release's glTF JSON, from headers before anything is parsed
             # (the content catalogue's 32 MiB per archive, B1)
-            budget += CG.gltf_json_bytes(name, head[:16], info.file_size)
+            gltf_total += CG.gltf_json_bytes(name, head[:16], info.file_size)
             raw = None
             sniff = CONTENT_EXT_MAGIC.get(pathlib.PurePosixPath(name).suffix.lower())
             if sniff is not None and sniff(head[:32]):
@@ -1152,7 +1176,7 @@ def content_report(zip_path, declared):
                     return {"ok": False, "error": f"{name} inflates past {CONTENT_ENTRY_CAP} bytes"}
                 content_files.append(name)
                 parts_by_path[name] = {"sha256": hashlib.sha256(raw).hexdigest(), "raw": raw, "gate": None}
-            why = name_problem(z, info, head, raw)
+            why = name_problem(z, info, head, raw, budget)
             if why:
                 format_refuse(name, why)
                 continue
@@ -1165,8 +1189,8 @@ def content_report(zip_path, declared):
                 why = gltf_format_problem(data, name, present) if data is not None else "unreadable"
                 if why:
                     format_refuse(name, why)
-        if budget > CG.MAX_GLTF_JSON_TOTAL:
-            format_refuse("", f"{budget} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
+        if gltf_total > CG.MAX_GLTF_JSON_TOTAL:
+            format_refuse("", f"{gltf_total} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
 
         # The VRM gate's selection rule (AstraPlugins 516ba38's part_licence):
         # judged by the file's own bytes, never by a `.vrm` name -- an avatar

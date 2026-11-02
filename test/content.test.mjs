@@ -586,3 +586,33 @@ test("#129 rule 4: a valid bundle's body licence is the part's licence, and an U
   assert.deepEqual(refusalsOf(runGolden(other.files, other.manifest)), [CODES.E_CONTENT_LICENCE_UNDECLARED],
     "an Unknown inside passes only with the declared licence");
 });
+
+// ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
+
+/** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */
+function pyBridge(code, input = "") {
+  const script = [
+    "import sys, json",
+    `sys.path.insert(0, ${JSON.stringify(path.join(ROOT, "lib"))})`,
+    "import schemacheck as sc",
+    code,
+  ].join("\n");
+  return JSON.parse(execFileSync("python3", ["-c", script], { input, maxBuffer: 64 * 1024 * 1024 }).toString("utf8"));
+}
+
+test("#129 254e60b: the slow sniff reads at most the release budget, then the asset key alone refuses", () => {
+  const one = '{"meta": {"asset": {}}, "pad": "' + "x".repeat(1000) + '"}'; // names the key, is no glTF
+  const files = Object.fromEntries([0, 1, 2, 3, 4].map((i) => [`data/${i}.json`, one]));
+  const dir = tmpdir("agc-budget-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      `sc.SNIFF_BUDGET = 3 * ${Buffer.byteLength(one)}`,
+      `print(json.dumps(sc.content_report(${JSON.stringify(zipPath)}, [])))`,
+    ].join("\n"));
+    assert.deepEqual(r.format_refusals.map((f) => f.path).sort(), ["data/3.json", "data/4.json"], JSON.stringify(r));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
