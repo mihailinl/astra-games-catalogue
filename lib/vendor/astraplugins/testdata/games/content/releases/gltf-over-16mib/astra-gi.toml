@@ -1,0 +1,24 @@
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/gltf-over-16mib/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a .gltf of 16 MiB + 29 bytes (built in memory, gen.py synth) --
+# E_CONTENT_FORMAT, checked before it is parsed.
+schema = 1
+
+[integration]
+id = "someone.gltf-over-16mib"
+name = "Gltf Over 16mib"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "models/big.gltf"
+kind = "art"
+title = "big"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

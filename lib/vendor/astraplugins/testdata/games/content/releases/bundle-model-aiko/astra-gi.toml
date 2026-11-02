@@ -1,0 +1,23 @@
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/bundle-model-aiko/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: the content catalogue's valid model-aiko.astrachar, byte for byte, with NO
+# licence declared -- accepted: its body's readable VRM licence is the part's licence (licence_source vrm).
+schema = 1
+
+[integration]
+id = "someone.bundle-model-aiko"
+name = "Bundle Model Aiko"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "characters/aiko.astrachar"
+kind = "character"
+title = "aiko"
+credit = "someone"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

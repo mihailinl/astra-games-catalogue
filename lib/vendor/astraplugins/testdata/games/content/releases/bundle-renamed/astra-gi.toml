@@ -1,0 +1,17 @@
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/bundle-renamed/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a valid .astrapack renamed packs/wave.zip, undeclared -- E_CONTENT_FORMAT: a zip
+# whose last entry is astrachar.json is a bundle by its bytes, and is named as one (manifest.md §2.7.1).
+schema = 1
+
+[integration]
+id = "someone.bundle-renamed"
+name = "Bundle Renamed"
+version = "0.1.0"
+license = "MIT"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

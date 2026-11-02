@@ -1,0 +1,24 @@
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/gltf-too-deep/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a .gltf whose JSON nests 129 deep -- E_CONTENT_FORMAT, the content
+# catalogue's depth cap of 128 (manifest.md §2.7.3; ingest-v1.md §3 step 10, gltf-too-deep).
+schema = 1
+
+[integration]
+id = "someone.gltf-too-deep"
+name = "Gltf Too Deep"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "models/prop.gltf"
+kind = "art"
+title = "prop"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

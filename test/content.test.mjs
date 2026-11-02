@@ -13,8 +13,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
+import { execFileSync } from "node:child_process";
+
 import { CODES } from "../lib/codes.mjs";
 import { checkContent } from "../lib/content.mjs";
+import { readTomlFile } from "../lib/schemas.mjs";
+import { stripHeader, VENDOR } from "../lib/vendored.mjs";
 import { ROOT, makeGlb, makeZipBytes, tmpdir } from "./helpers.mjs";
 
 const PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
@@ -245,31 +249,6 @@ test("a VRM part's readable licence_source is 'vrm' regardless of a declared lic
 
 // ── .astrachar: the nested body is gated the same as a bare .vrm ────────
 
-test(".astrachar: a readable bundle's body is gated the same as a bare .vrm", () => {
-  const inner = makeZipBytes({
-    "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
-    "models/Mira.vrm": ONLY_AUTHOR_VRM0,
-  });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner });
-  const r = checkContent({ zipPath, manifest });
-  const f = r.findings.find((f2) => f2.code === CODES.E_CONTENT_LICENCE_REFUSED);
-  assert.ok(f, JSON.stringify(r.findings));
-  assert.equal(f.path, "character/Mira.astrachar");
-  assert.equal(f.field, "extensions.VRM.meta.allowedUserName");
-});
-
-test(".astrachar: an unreadable body is a gap (F_CONTENT_ASTRACHAR_UNREADABLE), never a refusal", () => {
-  const inner = makeZipBytes({ "astrachar.json": JSON.stringify({ format: "astra.character", body: { ref: "builtin:nayu" } }) });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const zipPath = zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner });
-  const r = checkContent({ zipPath, manifest });
-  assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_REFUSED));
-  assert.ok(codesOf(r).includes(CODES.F_CONTENT_ASTRACHAR_UNREADABLE), JSON.stringify(r.findings));
-  assert.equal(r.content.length, 1, "a gap still lists the part -- it just has no vrm_licence, and falls back to the declared licence");
-  assert.equal(r.content[0].licence_source, "declared");
-});
-
 test("a fully covered, all-allowed release has no findings and lists every part", () => {
   const manifest = {
     integration: {
@@ -335,16 +314,6 @@ test("both metas allow redistribution: a disagreeing usage flag is NOT a conflic
   const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/avatar.vrm": both("Allow", false) }), manifest });
   assert.ok(!codesOf(r).includes(CODES.E_CONTENT_LICENCE_CONFLICT), JSON.stringify(r.findings));
   assert.equal(r.content[0].vrm_licence.vrm_version, "1.0");
-});
-
-test(".astrachar: a body carrying disagreeing metas is a conflict too", () => {
-  const inner = makeZipBytes({
-    "astrachar.json": JSON.stringify({ format: "astra.character", body: { file: "models/Mira.vrm" } }),
-    "models/Mira.vrm": DISAGREE,
-  });
-  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
-  const r = checkContent({ zipPath: zipPathFor({ "astra-gi.toml": "x", "character/Mira.astrachar": inner }), manifest });
-  assert.equal(r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_CONFLICT)?.path, "character/Mira.astrachar", JSON.stringify(r.findings));
 });
 
 // ── O-2b/O-2c and the extension-based selection rule (AstraPlugins 516ba38) ─
@@ -456,4 +425,299 @@ test("a .gltf naming a sibling .bin the release holds has no format finding", ()
   assert.ok(!codesOf(r).includes(CODES.E_CONTENT_FORMAT), JSON.stringify(r.findings));
   assert.equal(r.content.length, 1);
   assert.equal(r.content[0].path, "models/prop.gltf");
+});
+
+// ── AstraPlugins #129: every games content release golden, through THIS reading ──
+// The vendored testdata/games/content/releases/ goldens (and gen.py's synth()
+// for the ones too large to commit) are zipped as a release and run through
+// checkContent; each must get exactly the verdict, code, detail and flag its
+// vectors.json entry states -- the same entries AstraPlugins'
+// check-games-goldens.py holds itself to over the loose directories.
+
+const AP = path.join(VENDOR, "astraplugins");
+const VECTORS = JSON.parse(fs.readFileSync(path.join(AP, "testdata/games/vectors.json"), "utf8"));
+const RELEASES = Object.fromEntries(VECTORS.content.releases.map((v) => [v.name, v]));
+
+function walk(dir, base = dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+    const p = path.join(dir, d.name);
+    return d.isDirectory() ? walk(p, base) : [path.relative(base, p).split(path.sep).join("/")];
+  });
+}
+
+function synth(name) {
+  const gen = path.join(AP, "testdata/games/content/vrm/gen.py");
+  const script = [
+    "import importlib.util, sys",
+    `spec = importlib.util.spec_from_file_location("gen", ${JSON.stringify(gen)})`,
+    "gen = importlib.util.module_from_spec(spec); spec.loader.exec_module(gen)",
+    `sys.stdout.buffer.write(gen.synth(${JSON.stringify(name)}))`,
+  ].join("\n");
+  return execFileSync("python3", ["-c", script], { maxBuffer: 64 * 1024 * 1024 });
+}
+
+/** A release golden as upstream holds it: its files (vendored headers stripped), synthesised ones added. */
+function releaseGolden(name) {
+  const v = RELEASES[name];
+  const dir = path.join(AP, "testdata/games", v.dir);
+  const files = {};
+  for (const rel of walk(dir)) {
+    const upstreamPath = `testdata/games/${v.dir}/${rel}`;
+    files[rel] = stripHeader("astraplugins", upstreamPath, fs.readFileSync(path.join(dir, rel)));
+  }
+  for (const [rel, s] of Object.entries(v.synth ?? {})) files[rel] = synth(s);
+  const toml = readTomlFile(path.join(dir, "astra-gi.toml"));
+  assert.ok(toml.ok, toml.error);
+  return { v, files, manifest: toml.manifest };
+}
+
+function runGolden(files, manifest) {
+  const dir = tmpdir("agc-golden-");
+  try {
+    const zipPath = path.join(dir, "release.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const started = performance.now();
+    const r = checkContent({ zipPath, manifest });
+    Object.defineProperty(r, "seconds", { value: (performance.now() - started) / 1000 });
+    return r;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const refusalsOf = (r) => [...new Set(r.findings.filter((f) => f.code.startsWith("E_")).map((f) => f.code))].sort();
+const flagsOf = (r) => [...new Set(r.findings.filter((f) => f.code.startsWith("F_")).map((f) => f.code))].sort();
+
+for (const name of Object.keys(RELEASES)) {
+  test(`games content golden ${name}: ${RELEASES[name].verdict}${RELEASES[name].code ? ` ${RELEASES[name].code}` : ""}, as AstraPlugins' vectors.json says`, () => {
+    const { v, files, manifest } = releaseGolden(name);
+    const r = runGolden(files, manifest);
+    // a cost bound upstream holds its own checker to, which this reading must keep too (the
+    // clock runs around checkContent alone; 2 s more for the bridge's start-up and unzip)
+    if (v.max_seconds) assert.ok(r.seconds <= v.max_seconds + 2, `${r.seconds.toFixed(1)} s, over ${v.max_seconds} s + 2 s`);
+    assert.deepEqual(refusalsOf(r), v.verdict === "refuse" ? [v.code] : [], JSON.stringify(r.findings));
+    if (v.detail) assert.ok(r.findings.some((f) => f.message.includes(v.detail)), `no finding names "${v.detail}": ${JSON.stringify(r.findings)}`);
+    assert.deepEqual(flagsOf(r), [...(v.flags ?? [])].sort(), JSON.stringify(r.findings));
+    if (v.guard === "strict_json") {
+      // content's gltf_problem meets a too-deep JSON first and catches its RecursionError, so the
+      // verdict above cannot see this bridge's own guard: run each .gltf through _strict_json alone
+      for (const [rel, bytes] of Object.entries(files).filter(([f]) => f.endsWith(".gltf"))) {
+        const got = pyBridge([
+          "data = sys.stdin.buffer.read()",
+          "try:",
+          "    sc._strict_json(data); out = 'parsed'",
+          "except sc.GltfFormatError: out = 'refused'",
+          "except RecursionError: out = 'RecursionError'",
+          "print(json.dumps(out))",
+        ].join("\n"), bytes);
+        assert.equal(got, "refused", `${rel} through _strict_json alone`);
+      }
+    }
+  });
+}
+
+test("#129 rule 1: a GLB renamed .bin is refused, and named .vrm it is content (undeclared)", () => {
+  const { files, manifest } = releaseGolden("glb-named-bin");
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  files["data/avatar.vrm"] = files["data/avatar.bin"];
+  delete files["data/avatar.bin"];
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_UNDECLARED]);
+});
+
+test("#129 rule 1: a UTF-16 localisation file passes, the same encoding of a glTF does not", () => {
+  const ok = releaseGolden("localisation-utf16");
+  assert.deepEqual(refusalsOf(runGolden(ok.files, ok.manifest)), []);
+  const bad = releaseGolden("gltf-named-json-utf16");
+  assert.deepEqual(refusalsOf(runGolden(bad.files, bad.manifest)), [CODES.E_CONTENT_FORMAT]);
+});
+
+test("#129 rule 2: a .gltf uri is decoded once -- %2f climbs out beside its literal file, %20 names a space", () => {
+  // AstraPlugins #131 / #129 cd67bb3: the code is pinned, never content's wording
+  const { files, manifest } = releaseGolden("gltf-uri-percent");
+  assert.ok(Object.keys(files).some((f) => f.includes("%2f")), "the literal file is in the release");
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  const space = releaseGolden("gltf-uri-space-encoded");
+  assert.ok(Object.keys(space.files).includes("models/data/Base Color.bin"));
+  assert.deepEqual(refusalsOf(runGolden(space.files, space.manifest)), [], "Base%20Color.bin names the present file");
+});
+
+test("#129 rule 3: two 11 MiB GLBs fit the release's 32 MiB of glTF JSON, three do not", () => {
+  const { files, manifest } = releaseGolden("gltf-total-over-32mib");
+  assert.deepEqual(refusalsOf(runGolden(files, manifest)), [CODES.E_CONTENT_FORMAT]);
+  delete files["models/c.glb"];
+  const two = { ...manifest, integration: { ...manifest.integration, content: manifest.integration.content.filter((e) => e.path !== "models/c.glb") } };
+  assert.deepEqual(refusalsOf(runGolden(files, two)), []);
+});
+
+test("#129 rule 3: a .gltf a million levels deep is refused, never a crash of the gate", () => {
+  const { files, manifest } = releaseGolden("gltf-million-deep");
+  const r = runGolden(files, manifest);
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], JSON.stringify(r.findings));
+});
+
+test("#129 rule 4: an embedded bundle's refusal keeps the content contract's code and names <gi path>!<inner path>", () => {
+  const { files, manifest } = releaseGolden("bundle-glb-prohibited-beside-allowed-body");
+  const r = runGolden(files, manifest);
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_LICENCE_REFUSED);
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.equal(f.detail, "characters/scout.astrachar!characters/aiko/accessories/hat/hat.glb");
+  assert.equal(r.content.length, 0, "a refused part is never listed");
+});
+
+/** A Stored zip of regular files, in the order given (a bundle's astrachar.json last). */
+function bundleZip(files) {
+  const payload = Object.entries(files).map(([n, d]) => [n, Buffer.from(d).toString("base64")]);
+  const script = [
+    "import sys, json, zipfile, io, base64",
+    "buf = io.BytesIO()",
+    "with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as z:",
+    "    for name, data in json.load(sys.stdin):",
+    "        zi = zipfile.ZipInfo(name, date_time=(2026, 10, 31, 0, 0, 0))",
+    "        zi.external_attr = 0o100644 << 16",
+    "        z.writestr(zi, base64.b64decode(data))",
+    "sys.stdout.buffer.write(buf.getvalue())",
+  ].join("\n");
+  return execFileSync("python3", ["-c", script], { input: JSON.stringify(payload) });
+}
+
+test("#129 rule 4: a bundle the content contract cannot read is refused with its code, no longer a gap", () => {
+  const inner = bundleZip({ "astrachar.json": JSON.stringify({ format: "astra.character", body: { ref: "builtin:nayu" } }) });
+  const manifest = { integration: { content: [{ path: "character/Mira.astrachar", kind: "character", title: "t", credit: "c", licence: "CC0" }] } };
+  const r = runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": inner }, manifest);
+  assert.deepEqual(refusalsOf(r), [CODES.E_BUNDLE_MANIFEST], JSON.stringify(r.findings));
+  const lenient = makeZipBytes({ "astrachar.json": "{}" });
+  assert.deepEqual(refusalsOf(runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": lenient }, manifest)), [CODES.E_ARCHIVE_LINK],
+    "zipfile's default mode has no file-type bits: content's step 3 reads it as not a regular file");
+  const shape = bundleZip({ "astrachar.json": "[]" });
+  const r2 = runGolden({ "astra-gi.toml": "x", "character/Mira.astrachar": shape }, manifest);
+  assert.deepEqual(refusalsOf(r2), [CODES.E_BUNDLE_MANIFEST], "since #131 content refuses an array manifest itself");
+});
+
+test("#129 db897a7: a bundle shape content's reader raises on is refused E_CONTENT_FORMAT, never a crash", () => {
+  const { files, manifest } = releaseGolden("bundle-model-aiko");
+  const dir = tmpdir("agc-raise-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      "def raises(raw, ctx):",
+      "    raise TypeError('a shape the content checker does not handle')",
+      "sc.CG.ingest_bundle = raises",
+      `rep = sc.content_report(${JSON.stringify(zipPath)}, json.loads(sys.stdin.read()))`,
+      "print(json.dumps(rep['bundle_refusals']))",
+    ].join("\n"), JSON.stringify(manifest.integration.content));
+    assert.deepEqual(r.map((x) => x.code), [CODES.E_CONTENT_FORMAT], JSON.stringify(r));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 rule 4: a valid bundle's body licence is the part's licence, and an Unknown inside is flagged", () => {
+  const aiko = releaseGolden("bundle-model-aiko");
+  const r = runGolden(aiko.files, aiko.manifest);
+  assert.deepEqual(refusalsOf(r), []);
+  assert.equal(r.content[0].licence_source, "vrm");
+  assert.ok(r.content[0].vrm_licence, "the body's VRM licence is shown");
+  const other = releaseGolden("bundle-vrm0-licence-other");
+  other.manifest.integration.content[0].licence = "";
+  assert.deepEqual(refusalsOf(runGolden(other.files, other.manifest)), [CODES.E_CONTENT_LICENCE_UNDECLARED],
+    "an Unknown inside passes only with the declared licence");
+});
+
+// ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
+
+/** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */
+function pyBridge(code, input = "") {
+  const script = [
+    "import sys, json",
+    `sys.path.insert(0, ${JSON.stringify(path.join(ROOT, "lib"))})`,
+    "import schemacheck as sc",
+    code,
+  ].join("\n");
+  return JSON.parse(execFileSync("python3", ["-c", script], { input, maxBuffer: 64 * 1024 * 1024 }).toString("utf8"));
+}
+
+test("#129 254e60b: the slow sniff reads at most the release budget, then the asset key alone refuses", () => {
+  const one = '{"meta": {"asset": {}}, "pad": "' + "x".repeat(1000) + '"}'; // names the key, is no glTF
+  const files = Object.fromEntries([0, 1, 2, 3, 4].map((i) => [`data/${i}.json`, one]));
+  const dir = tmpdir("agc-budget-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      `sc.SNIFF_BUDGET = 3 * ${Buffer.byteLength(one)}`,
+      `print(json.dumps(sc.content_report(${JSON.stringify(zipPath)}, [])))`,
+    ].join("\n"));
+    assert.deepEqual(r.format_refusals.map((f) => f.path).sort(), ["data/3.json", "data/4.json"], JSON.stringify(r));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 3dac90f: a large entry beginning FF FE is never decoded whole by the bridge", () => {
+  const { files } = releaseGolden("pak-utf16-bom"); // 32 MiB, FF FE then lone surrogates
+  const dir = tmpdir("agc-pak-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    // around the sniff alone: verify_zip_headers inflates every entry to check its CRC, by design
+    const r = pyBridge([
+      "import tracemalloc, zipfile",
+      `z = zipfile.ZipFile(${JSON.stringify(zipPath)}); info = z.getinfo("data/level.pak")`,
+      "head = z.open(info).read(64)",
+      "tracemalloc.start()",
+      "why = sc.name_problem(z, info, head, None, sc.ReleaseBudget())",
+      "print(json.dumps({'peak': tracemalloc.get_traced_memory()[1], 'why': why}))",
+    ].join("\n"));
+    assert.equal(r.why, null);
+    assert.ok(r.peak < 8 * 1024 * 1024, `${r.peak} bytes traced for a test of the first character`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 cabb305: each embedded bundle is unzipped once", () => {
+  const { files, manifest } = releaseGolden("bundle-model-aiko");
+  const dir = tmpdir("agc-once-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      "calls = []",
+      "real = sc.CG.walk_zip",
+      "sc.CG.walk_zip = lambda b: calls.append(len(b)) or real(b)",
+      `rep = sc.content_report(${JSON.stringify(zipPath)}, json.loads(sys.stdin.read()))`,
+      "print(json.dumps({'calls': len(calls), 'refused': rep['bundle_refusals']}))",
+    ].join("\n"), JSON.stringify(manifest.integration.content));
+    assert.deepEqual(r.refused, []);
+    assert.equal(r.calls, 1, "content's walk_zip ran once for the one bundle");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#129 15dab18: over 16 MiB, an asset key and its object brace are found however much whitespace lies between", () => {
+  const MIB = 1024 * 1024;
+  // the key ends 1,000 bytes before the first 1 MiB read does, and 10,000 spaces follow it: the
+  // 64 bytes carried over between reads would hold only spaces, unless whitespace runs collapse
+  const before = '{"pad": "' + "x".repeat(MIB - 1020) + '", "asset"';
+  const text = before + " ".repeat(10000) + ': {"version": "2.0"}, "more": "' + "y".repeat(16 * MIB) + '"}';
+  const r = runGolden({ "astra-gi.toml": "x", "data/big.json": text }, { integration: { content: [] } });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], JSON.stringify(r.findings));
+  const plain = text.replace('"asset"', '"aset"');
+  assert.deepEqual(refusalsOf(runGolden({ "astra-gi.toml": "x", "data/big.json": plain }, { integration: { content: [] } })), []);
+});
+
+test("#129 f076038: a UTF-16 localisation .json or .toml is accepted though content refuses its kind; a UTF-16 glTF is not", () => {
+  // AstraPlugins #132 narrowed content's BOM rule to text kinds (.gltf, .json, .toml must be UTF-8);
+  // a game integration's own text keeps the games-only scope: the mark refuses a glTF candidate only
+  const utf16 = (t) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(t, "utf16le")]);
+  for (const name of ["lang/strings.json", "lang/strings.toml", "lang/strings.txt"]) {
+    const ok = runGolden({ "astra-gi.toml": "x", [name]: utf16('{"greeting": "Привет"}') }, { integration: { content: [] } });
+    assert.deepEqual(refusalsOf(ok), [], `${name}: ${JSON.stringify(ok.findings)}`);
+    const gltf = runGolden({ "astra-gi.toml": "x", [name]: utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
+    assert.deepEqual(refusalsOf(gltf), [CODES.E_CONTENT_FORMAT], `${name} holding a glTF`);
+  }
+  const r = runGolden({ "astra-gi.toml": "x", "models/prop.gltf": utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], "a .gltf must be UTF-8");
 });

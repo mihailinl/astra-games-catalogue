@@ -1,0 +1,25 @@
+# VENDORED from mihailinl/AstraPlugins at f07603838a9c6d8dca385fd38d08f38438439783, path testdata/games/content/releases/undeclared/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: E_CONTENT_UNDECLARED. "audio/theme.ogg" sits beside
+# this manifest in the release but no [[integration.content]] entry covers
+# it -- manifest.md §2.7.
+schema = 1
+
+[integration]
+id = "someone.undeclared-content"
+name = "Undeclared Content Example"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "art/cover.png"
+kind = "art"
+title = "Cover art"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"
