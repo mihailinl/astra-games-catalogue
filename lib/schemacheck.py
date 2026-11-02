@@ -607,10 +607,12 @@ SNIFF_BUDGET = 64 * 1024 * 1024
 
 class ReleaseBudget:
     """What one release may make the gate spend: the bytes the per-character
-    sniff reads (SNIFF_BUDGET)."""
+    sniff reads (SNIFF_BUDGET), and the glTF JSON it may parse -- 32 MiB per
+    release, embedded bundles included."""
 
     def __init__(self):
         self.sniffed = 0
+        self.gltf_json = 0
 
 
 def is_text_gltf(raw: bytes, budget=None) -> bool:
@@ -712,12 +714,11 @@ def name_problem(z, info, head: bytes, raw, budget=None) -> str | None:
 # Content's Unknown (held there) is F_CONTENT_VRM_META_UNKNOWN here, and a
 # refusal keeps content's own code, its detail prefixed `<path>!`.
 
-def _bundle_layout(raw: bytes):
-    """(part roots, body path, body bytes) by content's own reading, or
-    ([], None, None) when it cannot read that far."""
+def _bundle_layout(files):
+    """(part roots, body path, body bytes) by content's own reading of the
+    walked files, or ([], None, None) when it cannot read that far."""
     try:
-        files = CG.walk_zip(raw)
-        files.pop("\0order", None)
+        files = {p: b for p, b in files.items() if not p.startswith("\0")}
         man = CG.C.strict_loads(files["astrachar.json"])
         body = (man.get("body") or {}).get("file")
         settings = (man.get("character") or {}).get("dir")
@@ -727,12 +728,40 @@ def _bundle_layout(raw: bytes):
         return [], None, None
 
 
-def bundle_verdict(path: str, raw: bytes, licence) -> dict:
-    """{"status": "ok"|"unknown"|"bundle", "refusal": {"code","detail"}|None,
-    "body": (path, bytes)|None}."""
-    roots, body_path, body = _bundle_layout(raw)
+def _ingest_walked(raw: bytes, files, ctx):
+    """Content's ingest_bundle over a bundle ALREADY walked: its own walk_zip
+    call is answered with that walk, so a bundle is unzipped once."""
+    real = CG.walk_zip
+    CG.walk_zip = lambda b: dict(files) if b is raw else real(b)
     try:
-        got = CG.ingest_bundle(raw, {"declared_licence": roots if licence else []})
+        return CG.ingest_bundle(raw, ctx)
+    finally:
+        CG.walk_zip = real
+
+
+def bundle_verdict(path: str, raw: bytes, licence, budget=None) -> dict:
+    """{"status": "ok"|"unknown"|"bundle", "refusal": {"code","detail"}|None,
+    "body": (path, bytes)|None}. Unzipped ONCE by content's walk_zip; its glTF
+    JSON (from the walk's headers) is charged to the release's 32 MiB before
+    anything in it is parsed (AstraPlugins #129 cabb305: four 32 MiB bundles
+    once made the gate parse 128 MiB of JSON, and were accepted)."""
+    budget = budget if budget is not None else ReleaseBudget()
+    try:
+        files = CG.walk_zip(raw)
+    except CG.Refusal as r:
+        return {"status": "bundle", "refusal": {"code": r.code, "detail": f"{path}!{r.detail}"}, "body": None}
+    except Exception as e:  # noqa: BLE001 -- content's reader raised on a hostile shape: refuse, never crash
+        return {"status": "bundle", "body": None, "refusal": {
+            "code": "E_CONTENT_FORMAT", "detail": f"{path}!: the content checker cannot read it ({type(e).__name__}: {e})"}}
+    own = sum(CG.gltf_json_bytes(p, b[:16], len(b)) for p, b in files.items() if not p.startswith("\0"))
+    if budget.gltf_json + own > CG.MAX_GLTF_JSON_TOTAL:
+        return {"status": "bundle", "body": None, "refusal": {"code": "E_CONTENT_FORMAT", "detail":
+                f"{path}!: {budget.gltf_json + own} bytes of glTF JSON in the release with this bundle, "
+                f"over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)"}}
+    budget.gltf_json += own
+    roots, body_path, body = _bundle_layout(files)
+    try:
+        got = _ingest_walked(raw, files, {"declared_licence": roots if licence else []})
     except CG.Refusal as r:
         return {"status": "bundle", "refusal": {"code": r.code, "detail": f"{path}!{r.detail}"}, "body": None}
     except Exception as e:  # noqa: BLE001 -- content's reader raised on a hostile shape: refuse, never crash
@@ -1149,7 +1178,6 @@ def content_report(zip_path, declared):
         # Every file path in the release zip (not only the content-typed
         # ones): what a `.gltf`'s plain relative buffer/image uri may name.
         present = {i.filename for i in infos}
-        gltf_total = 0
         budget = ReleaseBudget()
         for info in infos:
             name = info.filename
@@ -1165,7 +1193,7 @@ def content_report(zip_path, declared):
                 continue
             # the release's glTF JSON, from headers before anything is parsed
             # (the content catalogue's 32 MiB per archive, B1)
-            gltf_total += CG.gltf_json_bytes(name, head[:16], info.file_size)
+            budget.gltf_json += CG.gltf_json_bytes(name, head[:16], info.file_size)
             raw = None
             sniff = CONTENT_EXT_MAGIC.get(pathlib.PurePosixPath(name).suffix.lower())
             if sniff is not None and sniff(head[:32]):
@@ -1189,8 +1217,8 @@ def content_report(zip_path, declared):
                 why = gltf_format_problem(data, name, present) if data is not None else "unreadable"
                 if why:
                     format_refuse(name, why)
-        if gltf_total > CG.MAX_GLTF_JSON_TOTAL:
-            format_refuse("", f"{gltf_total} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
+        if budget.gltf_json > CG.MAX_GLTF_JSON_TOTAL:
+            format_refuse("", f"{budget.gltf_json} bytes of glTF JSON in the release, over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)")
 
         # The VRM gate's selection rule (AstraPlugins 516ba38's part_licence):
         # judged by the file's own bytes, never by a `.vrm` name -- an avatar
@@ -1206,7 +1234,7 @@ def content_report(zip_path, declared):
                 continue
             raw = parts_by_path[path]["raw"]
             if path.lower().endswith(BUNDLE_EXTS) and _is_zip(raw[:4]):
-                bv = bundle_verdict(path, raw, entry.get("licence"))
+                bv = bundle_verdict(path, raw, entry.get("licence"), budget)
                 gate = {"status": bv["status"], "vrm_licence": None, "refusal": bv["refusal"]}
                 if bv["status"] == "ok" and bv["body"] is not None:
                     body_gate = vrm_gate(bv["body"][1], bv["body"][0])

@@ -638,3 +638,23 @@ test("#129 3dac90f: a large entry beginning FF FE is never decoded whole by the 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("#129 cabb305: each embedded bundle is unzipped once", () => {
+  const { files, manifest } = releaseGolden("bundle-model-aiko");
+  const dir = tmpdir("agc-once-");
+  try {
+    const zipPath = path.join(dir, "r.zip");
+    fs.writeFileSync(zipPath, makeZipBytes(files));
+    const r = pyBridge([
+      "calls = []",
+      "real = sc.CG.walk_zip",
+      "sc.CG.walk_zip = lambda b: calls.append(len(b)) or real(b)",
+      `rep = sc.content_report(${JSON.stringify(zipPath)}, json.loads(sys.stdin.read()))`,
+      "print(json.dumps({'calls': len(calls), 'refused': rep['bundle_refusals']}))",
+    ].join("\n"), JSON.stringify(manifest.integration.content));
+    assert.deepEqual(r.refused, []);
+    assert.equal(r.calls, 1, "content's walk_zip ran once for the one bundle");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
