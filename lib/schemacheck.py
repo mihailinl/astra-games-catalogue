@@ -582,6 +582,11 @@ def vrm_gate(raw, path=None, present=None):
 BUNDLE_EXTS = (".astrachar", ".astrapack")
 _BOM_CODECS = dict(zip(CG.UNICODE_BOMS, ("utf-32-be", "utf-32-le", "utf-16-le", "utf-16-be")))
 _ASSET_KEY = re.compile(rb'"(?:a|\\u0061)(?:s|\\u0073)(?:s|\\u0073)(?:e|\\u0065)(?:t|\\u0074)"')
+# ... whose value is an object: three.js reads asset.version, so a glTF's asset is
+# one (AstraPlugins #129 15dab18, a games-only difference): {"asset": "hero.png"}
+# is a game's data file, not a glTF
+_ASSET_OBJ = re.compile(_ASSET_KEY.pattern + rb"[ \t\r\n]*:[ \t\r\n]*\{")
+_WS_RUN = re.compile(rb"[ \t\r\n]+")
 _STREAM_CHUNK = 1024 * 1024
 
 
@@ -622,7 +627,7 @@ def is_text_gltf(raw: bytes, budget=None) -> bool:
     SNIFF_BUDGET is spent, the key alone refuses."""
     text = sniff_text(raw)
     body = text[len(CG.UTF8_BOM):] if text.startswith(CG.UTF8_BOM) else text
-    if body.lstrip(b" \t\r\n")[:1] != b"{" or _ASSET_KEY.search(body) is None:
+    if body.lstrip(b" \t\r\n")[:1] != b"{" or _ASSET_OBJ.search(body) is None:
         return False
     if len(raw) > CG.MAX_GLTF_JSON:
         return True
@@ -654,7 +659,10 @@ def _stream_search(z, info, pattern, decode: bool) -> bool:
             if not chunk:
                 return False
             data = dec.decode(chunk).encode("utf-8") if dec else chunk
-            buf = tail + data
+            # whitespace runs collapse to one space, so a key, its colon and its
+            # brace never lie further apart than the overlap below, however much
+            # whitespace a file puts between them
+            buf = _WS_RUN.sub(b" ", tail + data)
             if pattern.search(buf):
                 return True
             tail = buf[-64:]
@@ -691,7 +699,7 @@ def name_problem(z, info, head: bytes, raw, budget=None) -> str | None:
         return None if CG.name_matches_magic(name, head) else "a GLB (it begins with glTF) named something not .vrm, .glb or .vrma"
     if not low.endswith(".gltf") and _json_looking(head):
         if info.file_size > CG.MAX_GLTF_JSON:
-            if _stream_search(z, info, _ASSET_KEY, decode=True):
+            if _stream_search(z, info, _ASSET_OBJ, decode=True):
                 return f"a JSON text over 16 MiB ({info.file_size} bytes) that names an asset key, named something not .gltf"
         else:
             data = raw if raw is not None else _read_whole(z, info, CG.MAX_GLTF_JSON)
@@ -766,7 +774,7 @@ def name_problem_bytes(key: str, raw: bytes, budget) -> str | None:
     low = key.lower()
     if raw[:4] == CG.GLB_MAGIC:
         return None if CG.name_matches_magic(key, raw) else "a GLB (it begins with glTF) named something not .vrm, .glb or .vrma"
-    if not low.endswith(".gltf") and _first_char_bytes(raw) == b"{" and _names_key_bytes(raw, _ASSET_KEY):
+    if not low.endswith(".gltf") and _first_char_bytes(raw) == b"{" and _names_key_bytes(raw, _ASSET_OBJ):
         if len(raw) > CG.MAX_GLTF_JSON:
             return f"a JSON text over 16 MiB ({len(raw)} bytes) that names an asset key, named something not .gltf"
         if is_text_gltf(raw, budget):

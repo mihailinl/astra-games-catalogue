@@ -658,3 +658,15 @@ test("#129 cabb305: each embedded bundle is unzipped once", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("#129 15dab18: over 16 MiB, an asset key and its object brace are found however much whitespace lies between", () => {
+  const MIB = 1024 * 1024;
+  // the key ends 1,000 bytes before the first 1 MiB read does, and 10,000 spaces follow it: the
+  // 64 bytes carried over between reads would hold only spaces, unless whitespace runs collapse
+  const before = '{"pad": "' + "x".repeat(MIB - 1020) + '", "asset"';
+  const text = before + " ".repeat(10000) + ': {"version": "2.0"}, "more": "' + "y".repeat(16 * MIB) + '"}';
+  const r = runGolden({ "astra-gi.toml": "x", "data/big.json": text }, { integration: { content: [] } });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], JSON.stringify(r.findings));
+  const plain = text.replace('"asset"', '"aset"');
+  assert.deepEqual(refusalsOf(runGolden({ "astra-gi.toml": "x", "data/big.json": plain }, { integration: { content: [] } })), []);
+});
