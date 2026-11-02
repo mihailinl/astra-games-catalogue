@@ -1129,7 +1129,10 @@ def content_report(zip_path, declared):
         budget = 0
         for info in infos:
             name = info.filename
-            if pathlib.PurePosixPath(name).name == MANIFEST_NAME:
+            if name == MANIFEST_NAME:
+                # the manifest is astra-gi.toml at the release ROOT only; one in a
+                # folder is a file like any other, judged by its bytes (AstraPlugins
+                # #129 7163c45: a VRM saved as models/astra-gi.toml was exempt)
                 continue
             try:
                 with z.open(info) as f:
