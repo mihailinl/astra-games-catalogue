@@ -476,7 +476,10 @@ function runGolden(files, manifest) {
   try {
     const zipPath = path.join(dir, "release.zip");
     fs.writeFileSync(zipPath, makeZipBytes(files));
-    return checkContent({ zipPath, manifest });
+    const started = performance.now();
+    const r = checkContent({ zipPath, manifest });
+    Object.defineProperty(r, "seconds", { value: (performance.now() - started) / 1000 });
+    return r;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -489,6 +492,9 @@ for (const name of Object.keys(RELEASES)) {
   test(`games content golden ${name}: ${RELEASES[name].verdict}${RELEASES[name].code ? ` ${RELEASES[name].code}` : ""}, as AstraPlugins' vectors.json says`, () => {
     const { v, files, manifest } = releaseGolden(name);
     const r = runGolden(files, manifest);
+    // a cost bound upstream holds its own checker to, which this reading must keep too (the
+    // clock runs around checkContent alone; 2 s more for the bridge's start-up and unzip)
+    if (v.max_seconds) assert.ok(r.seconds <= v.max_seconds + 2, `${r.seconds.toFixed(1)} s, over ${v.max_seconds} s + 2 s`);
     assert.deepEqual(refusalsOf(r), v.verdict === "refuse" ? [v.code] : [], JSON.stringify(r.findings));
     if (v.detail) assert.ok(r.findings.some((f) => f.message.includes(v.detail)), `no finding names "${v.detail}": ${JSON.stringify(r.findings)}`);
     assert.deepEqual(flagsOf(r), [...(v.flags ?? [])].sort(), JSON.stringify(r.findings));

@@ -1,8 +1,9 @@
-# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/content/releases/gltf-named-json-utf16/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at f3fc49e51c736013d6267eb3301f14e4e9810bd0, path testdata/games/content/releases/gltf-named-json-utf16/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: the same text glTF, UTF-16LE with a byte-order mark, named
-# data/avatar.json -- E_CONTENT_FORMAT: a reader that decodes by the BOM sees a glTF (manifest.md §2.7.1).
+# data/avatar.json -- E_CONTENT_FORMAT: decoded by its BOM it is a glTF. three.js decodes UTF-8 and
+# would not load it, so this only over-refuses -- a margin, not a hole closed (manifest.md §2.7.1).
 schema = 1
 
 [integration]

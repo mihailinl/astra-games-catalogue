@@ -1,0 +1,17 @@
+# VENDORED from mihailinl/AstraPlugins at f3fc49e51c736013d6267eb3301f14e4e9810bd0, path testdata/games/content/releases/jar-glb-named-bin/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: a jar holding a GLB named assets/avatar.bin -- E_CONTENT_FORMAT: inside an
+# archive, too, a name never decides whether a file is content.
+schema = 1
+
+[integration]
+id = "someone.jar-glb-named-bin"
+name = "Jar Glb Named Bin"
+version = "0.1.0"
+license = "MIT"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/manifests/invalid/content-path-traversal.toml.
+# VENDORED from mihailinl/AstraPlugins at f3fc49e51c736013d6267eb3301f14e4e9810bd0, path testdata/games/manifests/invalid/content-path-traversal.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Invalid (schema): a [[integration.content]] path must be relative with no

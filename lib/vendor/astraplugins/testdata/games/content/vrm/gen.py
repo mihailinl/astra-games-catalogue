@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at d79ba1424e9f7c14cc49463db3085d5f93a9bc8e, path testdata/games/content/vrm/gen.py.
+# VENDORED from mihailinl/AstraPlugins at f3fc49e51c736013d6267eb3301f14e4e9810bd0, path testdata/games/content/vrm/gen.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -23,6 +23,7 @@ with the sha256 vectors.json pins, as the content catalogue's gen.py does.
     python3 gen.py --check   # write nothing; fail if any file differs
 """
 import codecs
+import functools
 import json
 import pathlib
 import struct
@@ -128,6 +129,8 @@ PCT_URI = "..%2f..%2f..%2f..%2fetc%2fpasswd"
 RELEASE_FILES = {
     # content by bytes (manifest.md §2.7.1): a GLB or a text glTF under any other name
     "releases/glb-named-bin/data/avatar.bin": lambda: glb(*GOLDENS["refused-vrm0-redistribution-prohibited.vrm"]),
+    # only the release ROOT's astra-gi.toml is the manifest; one in a folder is a file like any other
+    "releases/vrm-named-manifest-nested/models/astra-gi.toml": lambda: glb(*GOLDENS["refused-vrm0-redistribution-prohibited.vrm"]),
     "releases/gltf-named-json/data/avatar.json": lambda: gltf_text(GLTF_AVATAR_PROHIBITED),
     "releases/gltf-named-json-utf16/data/avatar.json":
         lambda: codecs.BOM_UTF16_LE + json.dumps(GLTF_AVATAR_PROHIBITED).encode("utf-16-le"),
@@ -136,6 +139,8 @@ RELEASE_FILES = {
         lambda: codecs.BOM_UTF16_LE + '{"greeting": "Привет", "farewell": "Пока"}'.encode("utf-16-le"),
     "releases/localisation-utf16/lang/credits.txt": lambda: codecs.BOM_UTF16_BE + "Спасибо\n".encode("utf-16-be"),
     "releases/json-nested-asset/data/config.json": lambda: gltf_text({"meta": {"asset": "props/crate"}}),
+    # a top-level asset that is not an object: three.js reads asset.version, so this is no glTF
+    "releases/json-asset-string/data/hero.json": lambda: gltf_text({"asset": "textures/hero.png", "scale": 2}),
     # a .gltf uri a loader percent-decodes BEFORE it joins: it leaves the release, though a file with
     # that literal name is right beside it (the content catalogue's pct, N2)
     "releases/gltf-uri-percent/models/prop.gltf":
@@ -164,8 +169,13 @@ def padded_glb(chunk_len: int) -> bytes:
 
 SYNTH = {
     # over the 16 MiB a key-by-key sniff reads: refused only when the bytes name "asset"
-    "json-over-16mib-nested-asset": lambda: b'{"meta": {"asset": 1}, "strings": "' + b"x" * (16 * MIB) + b'"}',
+    "json-over-16mib-nested-asset": lambda: b'{"meta": {"asset": {}}, "strings": "' + b"x" * (16 * MIB) + b'"}',
     "json-over-16mib-plain": lambda: b'{"strings": "' + b"x" * (16 * MIB) + b'"}',
+    # a 32 MiB game archive that happens to begin FF FE, then lone surrogates: decoded whole it
+    # is ~80 MB of str and UTF-8 for a test of its first character
+    "pak-utf16-bom": lambda: b"\xff\xfe" + b"\x00\xd8" * (16 * MIB),
+    # 16 MiB of {"":0,"":0,...}: the per-character sniff reads it at ~4 MiB a second
+    "json-16mib-many-keys": lambda: b"{" + b'"":0,' * (16 * MIB // 5 - 1) + b'"":0}',
     # the caps, each checked BEFORE anything is parsed
     "glb-json-over-16mib": lambda: padded_glb(16 * MIB + 4),
     "gltf-over-16mib": lambda: gltf_text(PLAIN_GLTF) + b" " * (16 * MIB),
@@ -194,8 +204,69 @@ for _rel, _src in BUNDLE_COPIES.items():
     RELEASE_FILES[_rel] = (lambda src: lambda: (CONTENT_ARCHIVES / src).read_bytes())(_src)
 
 
+@functools.lru_cache(maxsize=1)
+def content_gen():
+    """testdata/content/gen.py, whose bundle builders make the embedded bundles below."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("content_gen", HERE.parents[2] / "content" / "gen.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# ── a game's own archives (manifest.md §2.7.1): zips that are not bundles, built with the content
+# catalogue's own zip writer ──────────────────────────────────────────────────────────────────────
+
+PNG16 = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+MANIFEST_MF = b"Manifest-Version: 1.0\r\nCreated-By: gen.py\r\n"
+
+
+def jar(entries: list[dict]) -> bytes:
+    return content_gen().zip_bytes(entries)
+
+
+def avatar_jar(vrm: bytes, name: str = "assets/avatar.vrm", **tweak) -> bytes:
+    """A mod jar: a manifest and a Deflated .png (a bundle would have to store it), and a VRM."""
+    entries = [{"name": "META-INF/MANIFEST.MF", "data": MANIFEST_MF, "method": 8},
+               {"name": "assets/logo.png", "data": PNG16, "method": 8},
+               {"name": name, "data": vrm, "method": 0}]
+    for e in entries:
+        e.update(tweak.get(e["name"], {}))
+    return jar(entries)
+
+
+ALLOWED_VRM = lambda: glb(*GOLDENS["allowed.vrm"])  # noqa: E731
+PROHIBITED_VRM = lambda: glb(*GOLDENS["refused-vrm0-redistribution-prohibited.vrm"])  # noqa: E731
+Z64_EXTRA = struct.pack("<HHQQ", 0x0001, 16, 1, 1)  # a zip64 extended-information field
+
+RELEASE_FILES.update({
+    "releases/jar-vrm-undeclared/mods/avatar.jar": lambda: avatar_jar(ALLOWED_VRM()),
+    "releases/jar-vrm-declared/mods/avatar.jar": lambda: avatar_jar(ALLOWED_VRM()),
+    "releases/jar-vrm-prohibited/mods/avatar.jar": lambda: avatar_jar(PROHIBITED_VRM()),
+    "releases/jar-glb-named-bin/mods/avatar.jar": lambda: avatar_jar(PROHIBITED_VRM(), name="assets/avatar.bin"),
+    # a gap before the VRM's local header, where a cloaked entry hides (the content catalogue's gap-between-entries)
+    "releases/jar-cloaked/mods/avatar.jar":
+        lambda: avatar_jar(ALLOWED_VRM(), **{"assets/avatar.vrm": {"pad_before": b"PK\x03\x04HIDDEN-ENTRY"}}),
+    # zip64 (as a modpack past 65,535 entries or 4 GiB needs): not opened, flagged
+    "releases/jar-zip64/mods/big.jar":
+        lambda: avatar_jar(PROHIBITED_VRM(), **{"META-INF/MANIFEST.MF": {"extra": Z64_EXTRA}}),
+    # a jar inside a jar (Fabric's META-INF/jars/, Forge's jarjar): one level deep, flagged
+    "releases/jar-in-jar/mods/outer.jar": lambda: jar([
+        {"name": "META-INF/MANIFEST.MF", "data": MANIFEST_MF, "method": 8},
+        {"name": "META-INF/jars/inner.jar", "data": avatar_jar(PROHIBITED_VRM()), "method": 0}]),
+})
+
+# 5,000 entries: past the content catalogue's 4,096, within a game archive's 65,536
+SYNTH["jar-5000-entries"] = lambda: jar([{"name": f"assets/lang/{i}.txt", "data": b"x"} for i in range(5000)])
+
+SYNTH["astrapack-gltf-11mib"] = lambda: content_gen()._pack(
+    {"clips/g.gltf": content_gen()._big_json(11 * MIB)}, stored=["clips/g.gltf"])  # three of them: 33 MiB
+
+
+@functools.lru_cache(maxsize=4)
 def synth(name: str) -> bytes:
-    """The release goldens too large to commit, built in memory."""
+    """The release goldens too large to commit, built in memory (one copy of
+    each, however many files of a golden share it)."""
     return SYNTH[name]()
 
 
