@@ -105,6 +105,9 @@ test("trust.json must verify under the roots, carry kind_keys, and keep a kind k
   assert.throws(trustCase((s) => s.kind_keys.push(kindKeyRow("games", "next", "astra-games-2026c", throwawayKey()))), /E_TRUST_KIND_KEYS/, "three games keys");
   assert.throws(trustCase((s) => (s.kind_keys[1].role = "current")), /E_TRUST_KIND_KEYS/, "two currents");
   assert.throws(trustCase((s) => (s.kind_keys[0].alg = "rsa")), /E_TRUST_KIND_KEYS/);
+  // §5: next must start strictly after current, or the kind has no keys
+  assert.throws(trustCase((s) => { const c = s.kind_keys.find((k) => k.role === "current"); const n = s.kind_keys.find((k) => k.role === "next"); n.not_before = c.not_before; }), /E_TRUST_KIND_KEYS/, "next starting with current");
+  assert.throws(trustCase((s) => { const c = s.kind_keys.find((k) => k.role === "current"); const n = s.kind_keys.find((k) => k.role === "next"); [c.not_before, n.not_before] = [n.not_before, c.not_before]; }), /E_TRUST_KIND_KEYS/, "next before current");
   assert.throws(trustCase((s) => s.index_keys.push({ key_id: "astra-index-2026b", public_key: s.kind_keys[0].public_key })), /E_TRUST_KIND_KEY_IN_INDEX_KEYS/);
   assert.throws(trustCase((s) => s.kind_keys.push({ ...s.kind_keys[0], kind: "commands", role: "current", key_id: "astra-commands-2026a" }, kindKeyRow("commands", "next", "astra-commands-2026b", throwawayKey()))), /E_TRUST_KIND_KEYS/, "one key for two kinds");
   assert.throws(trustCase(null, { expiresAt: "2026-10-30T00:00:00Z" }), /E_TRUST_EXPIRED/);
@@ -115,7 +118,7 @@ test("a kind key is used only from its not_before", () => {
   const c = makeCatalogue();
   const late = { ...c.kindKeys, current: { ...c.kindKeys.current, not_before: "2026-12-01T00:00:00Z", notBefore: T0 + 30 * 86400 } };
   const rootKey = c.rootKey;
-  const doc = makeTrust({ rootKey, kindKeys: [kindKeyRow("games", "current", "astra-games-2026a", c.current, late.current.not_before), kindKeyRow("games", "next", "astra-games-2026b", c.next)] });
+  const doc = makeTrust({ rootKey, kindKeys: [kindKeyRow("games", "current", "astra-games-2026a", c.current, late.current.not_before), kindKeyRow("games", "next", "astra-games-2026b", c.next, "2026-12-01T00:01:00Z")] });
   fs.writeFileSync(c.trustFile, JSON.stringify(doc));
   assert.throws(() => c.sign(), /E_KEY_NOT_YET_VALID/);
 });
