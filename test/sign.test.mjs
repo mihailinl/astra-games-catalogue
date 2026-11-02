@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
 import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, verifyDocument, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
 import { validateMany } from "../lib/schemas.mjs";
-import { nextIssuedAt, selectSigner, signBoth } from "../lib/signing.mjs";
+import { nextIssuedAt, selectSigner, selectSigners, signBoth } from "../lib/signing.mjs";
 import { emptyModeration } from "../lib/state.mjs";
 import { candidate, FOO_DESCRIPTOR, makeCatalogue, T0 } from "./catalogue.mjs";
 import { throwawayKey } from "./helpers.mjs";
@@ -47,7 +47,7 @@ test("serial = issued_at, strictly above the kind's floor; a floor more than a d
   c.sign();
   c.sign();
   assert.equal(c.dist("games-index.json").signed.serial, T0 + 1, "a second run in the same second still moves forward");
-  assert.deepEqual(c.state("floors.json"), { kind: "games", index: T0 + 1, withdrawn: T0 + 1, spent: [] });
+  assert.deepEqual(c.state("floors.json"), { kind: "games", index: T0 + 1, withdrawn: T0 + 1, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [] } });
   assert.equal(nextIssuedAt({ now: 100, floors: { index: 50, withdrawn: 99 } }), 100);
   assert.equal(nextIssuedAt({ now: 100, floors: { index: 150, withdrawn: 99 } }), 151);
   assert.throws(() => nextIssuedAt({ now: 100, floors: { index: 100 + 86400, withdrawn: 0 } }), /E_SERIAL_AHEAD/);
@@ -61,10 +61,10 @@ test("expiry: a signature lives 7 days, and nothing longer than 8 days is ever s
     assert.equal(b.expires_at - b.issued_at, 7 * 86400);
     assert.ok(b.expires_at - b.issued_at <= 8 * 86400);
   }
-  const signer = selectSigner({ env: c.env, floors: {}, kindKeys: c.kindKeys, now: T0 });
+  const signers = selectSigners({ env: c.env, floors: {}, kindKeys: c.kindKeys, now: T0 });
   const state = { entries: [], engineCodes: {}, moderation: emptyModeration(), withdrawn: { rows: [], held: [] }, health: {}, floors: {} };
-  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, signer, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 + 1 }), /E_EXPIRY_TOO_LONG/);
-  const eight = signBoth({ state, seedLoaders: { loaders: [] }, signer, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 });
+  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, signers, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 + 1 }), /E_EXPIRY_TOO_LONG/);
+  const eight = signBoth({ state, seedLoaders: { loaders: [] }, signers, kindKeys: c.kindKeys, now: T0, expirySeconds: 8 * 86400 });
   assert.equal(eight.index.signed.expires_at - eight.index.signed.issued_at, 8 * 86400, "exactly 8 days is within the cap");
 });
 
@@ -173,7 +173,7 @@ test("bin/keygen.mjs writes a 0600 seed, refuses to overwrite, and prints only t
   assert.ok(!printed.includes(seed), "the seed is never printed");
   const other = throwawayKey();
   const kindKeys = { current: { ...row, notBefore: Math.floor(Date.parse(row.not_before) / 1000) }, next: { ...row, role: "next", key_id: "astra-games-2026b", public_key: other.publicB64, notBefore: 0 } };
-  const signer = selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: seed }, floors: {}, kindKeys, now: T0 });
+  const signer = selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: seed }, floors: {}, kindKeys, now: T0, schema: INDEX_SCHEMA });
   assert.equal(signer.public_key, row.public_key);
   assert.throws(() => execFileSync(process.execPath, [keygen, ...argv], { stdio: "pipe" }));
 });
