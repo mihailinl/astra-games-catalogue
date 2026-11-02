@@ -349,7 +349,7 @@ def gltf_format_problem(raw: bytes, path=None, present=None) -> str | None:
         # is refused by the content catalogue's own rule -- on a .gltf only
         why = CG.bom_refusal(path, raw) or _cap_problem(path, raw)
         if why:
-            return f"a .gltf that {why}" if why.startswith("begins") else why
+            return why
     try:
         doc = parse_glb_strict(raw) if is_glb else _strict_json(raw)
     except GltfFormatError as e:
@@ -579,7 +579,7 @@ def vrm_gate(raw, path=None, present=None):
 # and above 16 MiB (or past that budget) the key alone refuses.
 
 BUNDLE_EXTS = (".astrachar", ".astrapack")
-_BOM_CODECS = dict(zip(CG.UNICODE_BOMS, ("utf-32-be", "utf-32-le", "utf-16-le", "utf-16-be")))
+_BOM_CODECS = dict(CG.UNICODE_BOMS)  # content's own mark -> encoding map, UTF-32 first (#132)
 _ASSET_KEY = re.compile(rb'"(?:a|\\u0061)(?:s|\\u0073)(?:s|\\u0073)(?:e|\\u0065)(?:t|\\u0074)"')
 # ... whose value is an object: three.js reads asset.version, so a glTF's asset is
 # one (AstraPlugins #129 15dab18, a games-only difference): {"asset": "hero.png"}

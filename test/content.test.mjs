@@ -707,3 +707,17 @@ test("#129 15dab18: over 16 MiB, an asset key and its object brace are found how
   const plain = text.replace('"asset"', '"aset"');
   assert.deepEqual(refusalsOf(runGolden({ "astra-gi.toml": "x", "data/big.json": plain }, { integration: { content: [] } })), []);
 });
+
+test("#129 f076038: a UTF-16 localisation .json or .toml is accepted though content refuses its kind; a UTF-16 glTF is not", () => {
+  // AstraPlugins #132 narrowed content's BOM rule to text kinds (.gltf, .json, .toml must be UTF-8);
+  // a game integration's own text keeps the games-only scope: the mark refuses a glTF candidate only
+  const utf16 = (t) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(t, "utf16le")]);
+  for (const name of ["lang/strings.json", "lang/strings.toml", "lang/strings.txt"]) {
+    const ok = runGolden({ "astra-gi.toml": "x", [name]: utf16('{"greeting": "Привет"}') }, { integration: { content: [] } });
+    assert.deepEqual(refusalsOf(ok), [], `${name}: ${JSON.stringify(ok.findings)}`);
+    const gltf = runGolden({ "astra-gi.toml": "x", [name]: utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
+    assert.deepEqual(refusalsOf(gltf), [CODES.E_CONTENT_FORMAT], `${name} holding a glTF`);
+  }
+  const r = runGolden({ "astra-gi.toml": "x", "models/prop.gltf": utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], "a .gltf must be UTF-8");
+});
