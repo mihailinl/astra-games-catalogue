@@ -16,11 +16,11 @@ import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { emptyModeration } from "../lib/state.mjs";
-import { ROOT, fakeGh, fakeGithub, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, sha256, stubProbe, tmpdir } from "./helpers.mjs";
+import { PIN_050, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
 
 const reserved = loadReserved();
 const firstParty = JSON.parse(fs.readFileSync(path.join(ROOT, "first-party.json"), "utf8"));
-const loadersFile = path.join(ROOT, "loaders.json");
+const loaders = seedLoaders();
 const BINDING = { account: "astra-staging-author", repo_id: 900000001, repo_owner_id: 800000001, binding_token: "stagingBindingToken_0123456789abcdef" };
 const TOKEN = "stagingBindingToken_0123456789abcdef";
 const REQUEST = { lease_id: "lease-1", repo_id: 900000001, tag: "v1.0.0", binding_token_sha256: bindingTokenSha256(TOKEN), confirmed: [] };
@@ -33,16 +33,16 @@ function stagingZip(manifestText = fixtureText("astra-gi.toml")) {
   return makeZip({ "astra-gi.toml": manifestText, "BepInEx/plugins/Staging.dll": "not really a dll" });
 }
 
-async function run({ zip = stagingZip(), state = emptyState(), certificate = {}, gh = null, probe = null, github = null, request = REQUEST, manifestId = "astra-staging-author.staging-csharp-gi", version = "1.0.0", descriptorSha = null } = {}) {
+async function run({ zip = stagingZip(), state = emptyState(), certificate = {}, gh = null, probe = null, github = null, request = REQUEST } = {}) {
   return ingestRelease({
     request,
-    policy: { firstParty, loadersFile },
+    policy: { firstParty, loaders },
     state,
     reserved,
     deps: {
       github: github ?? fakeGithub({ zip }),
       gh: gh ?? fakeGh({ sha: sha256(zip), certificate }),
-      probe: probe ?? stubProbe({ manifestId, version, descriptorSha }),
+      probe: probe ?? fakeProbe(),
       steam: fakeSteam(),
       workdir: tmpdir(),
       now: () => 1793448000,
@@ -162,19 +162,83 @@ test("an attestation for other bytes is refused", async () => {
 });
 
 test("gi-probe absent: production fails closed with W_PROBE_UNAVAILABLE", async () => {
-  const c = await run({ probe: binaryProbe({ env: { PATH: "", GI_PROBE: "" } }) });
-  assert.equal(c.verdict, "wait");
-  assert.ok(codes(c).includes("W_PROBE_UNAVAILABLE"));
-  assert.equal(c.entry, undefined);
+  for (const probe of [binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: PIN_050 }), binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: { version: null } })]) {
+    const c = await run({ probe });
+    assert.equal(c.verdict, "wait");
+    assert.ok(codes(c).includes("W_PROBE_UNAVAILABLE"));
+    assert.equal(c.entry, undefined);
+  }
 });
 
-test("a gi-probe error refuses; a gi-probe that disagrees with tomllib refuses", async () => {
-  const a = await run({ probe: stubProbe({ manifestId: "astra-staging-author.staging-csharp-gi", version: "1.0.0", findings: [{ code: "zip-traversal", level: "error", message: "../evil" }] }) });
-  assert.ok(codes(a).includes("E_PROBE"));
-  const b = await run({ probe: stubProbe({ manifestId: "someone.else", version: "1.0.0" }) });
+// The fake answers in gi-probe 0.5.0's own spelling: a finding is {code,
+// step, field?, detail, params?} (main.rs l.113-123; codes as check.rs and
+// tests/gi_probe.rs l.3213-3220 raise them), and a refusal is verdict fail,
+// exit 1.
+test("a gi-probe check finding refuses E_PROBE, in gi-probe's own code and words", async () => {
+  const c = await run({ probe: fakeProbe({ check: { findings: [{ code: "loader-undeclared", step: 2, field: "game_files", detail: "winhttp.dll is placed and [integration.loader] does not declare it", params: { file: "winhttp.dll" } }] } }) });
+  assert.equal(c.verdict, "refuse");
+  const f = c.findings.find((x) => x.code === "E_PROBE");
+  assert.ok(f, JSON.stringify(c.findings));
+  assert.equal(f.probe_code, "loader-undeclared");
+  assert.match(f.message, /^gi-probe check loader-undeclared \(game_files\): winhttp\.dll is placed/);
+});
+
+test("gi-probe reading another id, version or descriptor than the catalogue refuses E_PROBE_DISAGREES", async () => {
+  const a = await run({ probe: fakeProbe({ check: { integration: { id: "someone.else", name: "x", version: "1.0.0", repo: null, engine: null, sdk: null } } }) });
+  assert.ok(codes(a).includes("E_PROBE_DISAGREES"), JSON.stringify(a.findings));
+  const b = await run({ probe: fakeProbe({ check: { integration: { id: "astra-staging-author.staging-csharp-gi", name: "x", version: "1.0.1", repo: null, engine: null, sdk: null } } }) });
   assert.ok(codes(b).includes("E_PROBE_DISAGREES"));
-  const c = await run({ probe: { async ingest() { return { nonsense: true }; } } });
-  assert.ok(codes(c).includes("E_PROBE"));
+  const c = await run({ probe: fakeProbe({ check: { descriptor_sha256: "e".repeat(64) } }) });
+  assert.ok(codes(c).includes("E_PROBE_DISAGREES"), "a descriptor the catalogue does not see");
+});
+
+test("a report the catalogue cannot read as gi-probe 0.5.0's is W_PROBE_UNAVAILABLE, never accept and never a refusal", async () => {
+  const cases = {
+    "stdout that is not JSON": { check: { stdout: "Segmentation fault\n", exit: 0 } },
+    "another schema": { check: { patch: { schema: "astra.gi-probe/2" } } },
+    "another tool.version": { tool: { version: "0.5.1" } },
+    "another source tree": { tool: { source_tree_sha256: "0".repeat(64) } },
+    "another subcommand's report": { check: { patch: { subcommand: "compat" } } },
+    "a pass with findings": { check: { findings: [{ code: "zip-traversal", step: 1, detail: "../evil" }], exit: 0 } },
+    "a fail without findings": { check: { patch: { verdict: "fail" }, exit: 1 } },
+    "the old contract's finding shape": { check: { findings: [{ code: "zip-traversal", level: "error", message: "../evil" }] } },
+    "exit 2, nothing concluded": { check: { patch: { error: { code: "io", detail: "x: no such file" } }, exit: 2 } },
+    "a report of other bytes": { check: { patch: { input: { file: "x", kind: "zip", sha256: "a".repeat(64), provenance: "community", foundation: null, previous: null, loaders: null } } } },
+    "a passing check with no integration": { check: { integration: null } },
+  };
+  for (const [what, scenario] of Object.entries(cases)) {
+    const c = await run({ probe: fakeProbe(scenario) });
+    assert.equal(c.verdict, "wait", `${what}: ${JSON.stringify(c.findings)}`);
+    assert.ok(codes(c).includes("W_PROBE_UNAVAILABLE"), what);
+    assert.ok(!codes(c).includes("E_PROBE"), what);
+    assert.equal(c.entry, undefined, what);
+  }
+});
+
+test("the entry's game files, Link summary and schema digests come from the catalogue's own reading of the zip", async () => {
+  const proxy = "MZ a Doorstop build, off by default";
+  const text = fixtureText("astra-gi.toml") + [
+    "",
+    "[integration.loader]",
+    'proxies = ["winhttp.dll"]',
+    "",
+    "[[game_files]]",
+    'from = "game/winhttp.dll"',
+    'to = "${game}/winhttp.dll"',
+    "",
+  ].join("\n");
+  const zip = makeZip({ "astra-gi.toml": text, "BepInEx/plugins/Staging.dll": "not really a dll", "game/winhttp.dll": proxy });
+  const c = await run({ zip });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.deepEqual(c.entry.changes.game_files, [{ path: "winhttp.dll", sha256: sha256(Buffer.from(proxy)), loader: "other" }]);
+  assert.ok(codes(c).includes("F_LOADER_OTHER"));
+  assert.equal(c.meta.files["game/winhttp.dll"], sha256(Buffer.from(proxy)));
+  assert.equal(c.meta.files["astra-gi.toml"], sha256(Buffer.from(text)));
+  assert.deepEqual(c.meta.probe.ran, ["check"]);
+  assert.ok(c.meta.probe.notices.includes("check:loader-other"));
+  // gi-probe classing another file than the manifest places refuses
+  const other = await run({ zip, probe: fakeProbe({ check: { loaders_files: [{ dest: "${game}/winhttp.dll", sha256: "b".repeat(64), class: "allowlisted", allowlisted_as: "doorstop-winhttp" }] } }) });
+  assert.ok(codes(other).includes("E_PROBE_DISAGREES"), JSON.stringify(other.findings));
 });
 
 test("a VAC game and a game a moderator refused are refused; an online game is only flagged", async () => {
@@ -306,9 +370,9 @@ test("engine-code-reserved: a built-in code is refused", async () => {
 
 // ── first-party by digest pin (merged §5.1) ─────────────────────────────
 
-function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.peak").replace("Staging C# test integration", "Astra in PEAK")), prerelease = false } = {}) {
+function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.peak").replace("Staging C# test integration", "Astra in PEAK")), prerelease = false, probe = fakeProbe() } = {}) {
   const repo = { id: 1409552680, full_name: "mihailinl/astra-peak", owner: { id: 193032699 }, private: false, visibility: "public", default_branch: "main" };
-  const policy = { firstParty: { ...firstParty, pins }, loadersFile };
+  const policy = { firstParty: { ...firstParty, pins }, loaders };
   const gh = fakeGh({ sha: sha256(zip) });
   return ingestRelease({
     request: { repo_id: 1409552680, tag: "v1.0.0" },
@@ -318,12 +382,12 @@ function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml"
     deps: {
       github: fakeGithub({ zip, repo, release: { ...fixture("release.json"), prerelease } }),
       gh,
-      probe: stubProbe({ manifestId: "astra.peak", version: "1.0.0" }),
+      probe,
       steam: fakeSteam(),
       workdir: tmpdir(),
       now: () => 1793448000,
     },
-  }).then((c) => ({ c, gh, zip }));
+  }).then((c) => ({ c, gh, zip, probe }));
 }
 
 test("first-party: admitted by digest pin, with no attestation asked for", async () => {
@@ -453,4 +517,69 @@ test("Check now: a lease with no tag ingests the latest stable release, and a re
   const none = await run({ zip, request: { ...REQUEST, tag: null }, github: fakeGithub({ zip, latest: null }) });
   assert.ok(codes(none).includes("E_RELEASE_NOT_FOUND"));
   assert.equal(none.request.tag, null);
+});
+
+// ── gi-probe 0.5.0's subcommands, by release (lib/probe.mjs's table) ─────
+
+function fooFoundation(probe) {
+  const zip = makeZip({ "astra-gi.toml": fixtureText("foo-engine.toml"), "foo/runtime.dll": "x" });
+  return run({ zip, probe, github: fakeGithub({ zip, release: { ...fixture("release.json"), tag_name: "v0.1.0" } }), request: { ...REQUEST, tag: "v0.1.0" }, certificate: { sourceRepositoryRef: "refs/tags/v0.1.0" } });
+}
+
+test("a community integration runs check alone, --provenance community, with loaders[] as the bare array check.rs reads", async () => {
+  const probe = fakeProbe();
+  const c = await run({ probe });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.deepEqual(probe.calls.map((a) => a[0]), ["check"]);
+  const [argv] = probe.calls;
+  assert.equal(argv[argv.indexOf("--provenance") + 1], "community");
+  const list = JSON.parse(fs.readFileSync(argv[argv.indexOf("--loaders") + 1], "utf8"));
+  assert.ok(Array.isArray(list) && list.length > 0);
+  for (const l of list) assert.deepEqual(Object.keys(l).sort(), ["default_enabled", "name", "sha256"]);
+  assert.deepEqual(c.meta.probe, { name: "gi-probe", version: "0.5.0", source_tree_sha256: PIN_050.source_tree_sha256, ran: ["check"], notices: [] });
+});
+
+test("a foundation that owns a code runs validate-descriptor on its astra-gi.toml as shipped; a digest it disagrees on refuses", async () => {
+  const probe = fakeProbe();
+  const c = await fooFoundation(probe);
+  assert.ok(!codes(c).some((x) => /PROBE/.test(x)), JSON.stringify(c.findings));
+  assert.deepEqual(probe.calls.map((a) => a[0]), ["check", "validate-descriptor"]);
+  const shipped = probe.calls[1][1];
+  assert.equal(fs.readFileSync(shipped, "utf8"), fixtureText("foo-engine.toml"));
+  const d = await fooFoundation(fakeProbe({ "validate-descriptor": { descriptor_sha256: "c".repeat(64) } }));
+  assert.ok(codes(d).includes("E_PROBE_DISAGREES"), JSON.stringify(d.findings));
+  // validate-descriptor's refusal is gi-probe's, said once even when check says it too
+  const lint = { code: "descriptor-too-broad", step: 2, field: "engine.rules", detail: "anchored on a generic name", params: { reason: "generic-name" } };
+  const e = await fooFoundation(fakeProbe({ check: { findings: [lint] }, "validate-descriptor": { findings: [lint] } }));
+  assert.equal(e.findings.filter((f) => f.probe_code === "descriptor-too-broad").length, 1);
+});
+
+test("first-party: a 0.2.7 source of its own repository runs compat (R30); compat's refusal refuses, and other releases never run it", async () => {
+  const zip0 = (await firstPartyRun()).zip;
+  const pins = [{ repository_id: 1409552680, tag: "v1.0.0", asset: "astra-gi.zip", sha256: sha256(zip0) }];
+  const { c, probe } = await firstPartyRun({ pins });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.deepEqual(probe.calls.map((a) => a[0]), ["check", "compat"]);
+  const [check, compat] = probe.calls;
+  assert.equal(check[check.indexOf("--provenance") + 1], "first-party");
+  assert.equal(compat[compat.indexOf("--source") + 1], "astra.peak");
+  assert.equal(compat[compat.indexOf("--tag") + 1], "v1.0.0");
+  assert.equal(compat[compat.indexOf("--asset") + 1], "astra-gi.zip");
+  assert.equal(compat[compat.indexOf("--sha256") + 1], sha256(zip0));
+  assert.ok(!compat.includes("--prerelease"));
+  assert.deepEqual(c.meta.probe.ran, ["check", "compat"]);
+  // compat.rs's own refusal (tests/gi_probe.rs l.1297-1300: verdict fail, findings)
+  const refused = (await firstPartyRun({ pins, probe: fakeProbe({ compat: { findings: [{ code: "needs-newer-astra", step: 1, detail: "uses ${astra_pack_inbox}", params: { min_astra: "0.2.8", placeholder: "astra_pack_inbox" } }] } }) })).c;
+  assert.ok(refused.findings.some((f) => f.code === "E_PROBE" && f.probe_code === "needs-newer-astra"), JSON.stringify(refused.findings));
+  // a prerelease is judged as one
+  const pre = await firstPartyRun({ pins, prerelease: true });
+  assert.ok(pre.probe.calls[1].includes("--prerelease"));
+  // a first-party id 0.2.7 never installed: no compat (compat.rs l.142-150 would exit 2)
+  const fresh = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.new-game").replace("Staging C# test integration", "Astra in a new game"));
+  const n = await firstPartyRun({ zip: fresh });
+  assert.deepEqual(n.probe.calls.map((a) => a[0]), ["check"]);
+  // a community release: never
+  const probe2 = fakeProbe();
+  await run({ probe: probe2 });
+  assert.ok(!probe2.calls.some((a) => a[0] === "compat"));
 });

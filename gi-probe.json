@@ -1,6 +1,7 @@
 {
   "$comment": "The gi-probe build ingest runs (A§5.2 step 5; merged R28). It ships with astra-game-launcher 0.5.0, which is not released yet, so `version` is null and ingest WAITS (W_PROBE_UNAVAILABLE) on every release: nothing is listed without a probe. When 0.5.0 is released, fill version, url and sha256 (the Linux x86_64 binary's digest) in one pull request; bin/fetch-gi-probe.mjs refuses a download whose digest differs.",
   "schema": "astra.games.gi-probe/1",
+  "source_tree_sha256": "9c6f9cf33b89e38fe99c93286416ce97696cc351f247c8d13948ded6bc5abefb",
   "version": null,
   "url": null,
   "sha256": null

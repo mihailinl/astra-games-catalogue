@@ -29,6 +29,11 @@ try {
   if (!/^https:\/\/github\.com\//.test(String(pin.url)) || !/^[0-9a-f]{64}$/.test(String(pin.sha256))) {
     throw new Error("gi-probe.json pins a version without a github.com url and a sha256");
   }
+  // optional: the build's tool.source_tree_sha256, which lib/probe.mjs
+  // requires of every report (the launcher's build.rs tree hash of the tag)
+  if (pin.source_tree_sha256 != null && !/^[0-9a-f]{64}$/.test(String(pin.source_tree_sha256))) {
+    throw new Error("gi-probe.json's source_tree_sha256 is not 64 hex digits");
+  }
   const res = await fetch(pin.url, { redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${pin.url}`);
   const bytes = Buffer.from(await res.arrayBuffer());

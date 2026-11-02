@@ -47,12 +47,11 @@ async function main() {
   const policy = loadPolicy(ROOT);
   const state = loadState(data);
   const workdir = path.join(path.dirname(path.resolve(outFile)), "work");
-  const loadersFile = path.join(workdir, "loaders.json");
-  writeJson(loadersFile, { loaders: effectiveLoaders(policy.loaders, state.moderation) });
 
   const candidate = await ingestRelease({
     request,
-    policy: { firstParty: policy.firstParty, loadersFile },
+    // ingest hands gi-probe check these rows as the bare array --loaders reads
+    policy: { firstParty: policy.firstParty, loaders: effectiveLoaders(policy.loaders, state.moderation) },
     state,
     reserved: loadReserved(),
     deps: { github: githubApi(), gh: runGh, probe: binaryProbe(), steam: storeApi(), workdir },
