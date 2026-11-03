@@ -167,18 +167,18 @@ export function fakeSteam() {
   };
 }
 
-/** fixtures/gi-probe/fake-gi-probe.mjs: a fake gi-probe 0.5.0 binary (no real gi-probe ever runs in a test). */
+/** fixtures/gi-probe/fake-gi-probe.mjs: a fake gi-probe 0.5.1 binary (no real gi-probe ever runs in a test). */
 export const FAKE_GI_PROBE = path.join(ROOT, "fixtures", "gi-probe", "fake-gi-probe.mjs");
 
-/** The pin the tests hold the fake to: gi-probe 0.5.0, by version and source tree. */
-export const PIN_050 = Object.freeze({ version: "0.5.0", source_tree_sha256: "9c6f9cf33b89e38fe99c93286416ce97696cc351f247c8d13948ded6bc5abefb" });
+/** The pin the tests hold the fake to: gi-probe 0.5.1, by version and source tree. */
+export const PIN_051 = Object.freeze({ version: "0.5.1", source_tree_sha256: "09a34a65ff200c9e313a8297efcdb5dc7c9db92c8deac0af3d671862d028ef46" });
 
 /**
  * lib/probe.mjs's production binaryProbe, running the fake binary. It agrees
  * with the release it is shown unless `scenario` says otherwise (the fake's
  * header lists the members); `calls` is every command line it was given.
  */
-export function fakeProbe(scenario = {}, { pin = PIN_050 } = {}) {
+export function fakeProbe(scenario = {}, { pin = PIN_051 } = {}) {
   const dir = tmpdir("agc-probe-");
   const file = path.join(dir, "scenario.json");
   const log = path.join(dir, "argv.jsonl");

@@ -2,28 +2,36 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// A FAKE gi-probe 0.5.0, for the tests: what lib/probe.mjs runs in place of
+// A FAKE gi-probe 0.5.1, for the tests: what lib/probe.mjs runs in place of
 // the real binary, which no test and no part of this work ever executes.
 //
-// It reads its command line as main.rs does (test/gi-probe-v050.mjs
-// parseLikeMain, from main.rs l.397-540) and answers a wrong one as main.rs
+// It reads its command line as main.rs does (test/gi-probe-v051.mjs
+// parseLikeMain, from main.rs l.400-543) and answers a wrong one as main.rs
 // does — exit 2, `{schema, tool, subcommand, error{code: "usage", detail}}`
-// on stdout (main.rs l.559-576). A right one gets a report of exactly the
-// keys 0.5.0 writes, in its order (main.rs l.275-340):
+// on stdout (main.rs l.562-579). A right one gets a report of exactly the
+// keys 0.5.1 writes, in its order (main.rs l.278-343). The command line is
+// byte identical to 0.5.0's (test/gi-probe-v051.mjs's module doc); what grew
+// is what check and validate-descriptor judge: `link.digest` (manifest.md
+// §2.6.1), `descriptor.mods_loaders`, and TOML 1.0 / mods-invalid findings a
+// test injects directly through the scenario's `findings`/`patch` below —
+// this fake still reads with Python's tomllib (already strict TOML 1.0), so
+// it cannot itself manufacture a toml-1.0 report the way the real launcher's
+// more permissive parser can.
 //
-//   check (check.rs l.553-590; keys as the launcher's author read them off
+//   check (check.rs l.592-629; keys as the launcher's author read them off
 //   the released musl build): schema, tool{version, source_tree_sha256},
 //   subcommand, verdict, input{file, kind, sha256, provenance, foundation,
 //   previous, loaders}, spec{repo, sha, section}, integration{id, name,
-//   version, repo, engine, sdk}, descriptor{sha256, codes}, negative_folders,
-//   link{files, schemas_validated, why}, built_on, code_changed, steps,
-//   notices, content{content_files, parts, classes}, loaders{allowlist,
-//   allowlist_entries, hijack_names, files[{dest, sha256, class,
-//   allowlisted_as}]}, findings[{code, step, field?, detail, params?}];
-//   validate-descriptor (descriptor.rs l.546-562): schema, tool, subcommand,
+//   version, repo, engine, sdk}, descriptor{sha256, codes, mods_loaders},
+//   negative_folders, link{digest, files, schemas_validated, why}, built_on,
+//   code_changed, steps, notices, content{content_files, parts, classes},
+//   loaders{allowlist, allowlist_entries, hijack_names, files[{dest, sha256,
+//   class, allowlisted_as}]}, findings[{code, step, field?, detail, params?}];
+//   validate-descriptor (descriptor.rs l.576-592): schema, tool, subcommand,
 //   verdict, input{file, kind, first_party}, spec, descriptor, negative_folders,
 //   notices, findings;
-//   compat (compat.rs l.307-334): schema, tool, subcommand, verdict,
+//   compat (compat.rs l.307-334, unchanged from 0.5.0: compat.rs has no diff
+//   at all between the two tags): schema, tool, subcommand, verdict,
 //   input{zip, zip_sha256, digest_checked, tag, asset, prerelease, previous,
 //   notes}, source{id, repo, repo_id, tag_prefix, asset, target},
 //   against{astra, launcher}, integration{id, version, repo}, steps, notices,
@@ -31,8 +39,10 @@
 //
 // By default it agrees with the release: it reads the zip itself (Python's
 // zipfile and tomllib, not the catalogue's code) and classifies each
-// [[game_files]] entry as check.rs l.469-505 does. A test makes it disagree,
-// refuse or misbehave through a scenario file ($FAKE_GI_PROBE_SCENARIO):
+// [[game_files]] entry as check.rs l.508-544 does, and digests
+// [integration.link] as manifest.md §2.6.1 and lib/model.mjs's linkOf do. A
+// test makes it disagree, refuse or misbehave through a scenario file
+// ($FAKE_GI_PROBE_SCENARIO):
 //
 //   { "tool": {…},                                 // every report's tool
 //     "<subcommand>": {
@@ -53,7 +63,7 @@ import { fileURLToPath } from "node:url";
 import { jcs } from "../../lib/vendor/astra-registry/tools/lib/canonical.mjs";
 import {
   CHECK_STEPS, COMPAT_027, COMPAT_STEPS, HIJACK_NAMES, KEY_ORDER, NEGATIVE_FOLDERS, REPORT_SCHEMA, SPEC_SHA, TOOL, parseLikeMain,
-} from "../../test/gi-probe-v050.mjs";
+} from "../../test/gi-probe-v051.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -62,7 +72,7 @@ const scenario = process.env.FAKE_GI_PROBE_SCENARIO ? JSON.parse(fs.readFileSync
 const tool = { ...TOOL, ...(scenario.tool ?? {}) };
 const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
 
-/** main.rs l.316-340: KEY_ORDER first, the rest sorted, `findings` last. */
+/** main.rs l.319-343: KEY_ORDER first, the rest sorted, `findings` last. */
 function ordered(r) {
   const rank = (k) => (k === "findings" ? Infinity : KEY_ORDER.includes(k) ? KEY_ORDER.indexOf(k) : KEY_ORDER.length);
   const keys = Object.keys(r).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
@@ -74,20 +84,20 @@ function emit(report, code) {
   process.exit(code);
 }
 
-/** main.rs l.561-576: nothing concluded. */
+/** main.rs l.564-579: nothing concluded. */
 function fatal(code, detail) {
   process.stderr.write(`gi-probe: ${code}: ${detail}\n`);
   emit({ schema: REPORT_SCHEMA, tool, subcommand: argv[0] ?? "", error: { code, detail } }, 2);
 }
 
-/** main.rs l.275-288, with the scenario's findings, notices, patch and exit. */
+/** main.rs l.278-291, with the scenario's findings, notices, patch and exit. */
 function finish(subcommand, rest, findings, sc) {
   const report = { schema: REPORT_SCHEMA, tool: sc.tool ? { ...tool, ...sc.tool } : tool, subcommand, verdict: findings.length ? "fail" : "pass", ...rest, findings };
   Object.assign(report, sc.patch ?? {});
   emit(report, sc.exit ?? (findings.length ? 1 : 0));
 }
 
-/** Probe::close / skip (main.rs l.211-241): each step pass, fail, notice or skipped. */
+/** Probe::close / skip (main.rs l.214-244): each step pass, fail, notice or skipped. */
 function steps(names, findings, notices, skipped, extra = {}) {
   return names.map((check, i) => {
     const step = i + 1;
@@ -132,16 +142,28 @@ function readFile(file) {
   }
 }
 
-/** descriptor.rs l.494-500. */
+/**
+ * descriptor.rs l.500-513: its digest, codes, and (0.5.1) the ids of a valid
+ * `mods`'s loaders in order — null without `mods`, [] for one this fake
+ * treats as refused (not a table of `{loader: [{id, ...}, ...]}`; the real
+ * launcher's reasons are spec §7.9's, which a test injects directly as a
+ * `mods-invalid` finding rather than through this approximation).
+ */
 function descriptorSummary(d, sc) {
-  if (Object.hasOwn(sc, "descriptor_sha256")) return sc.descriptor_sha256 === null ? null : { sha256: sc.descriptor_sha256, codes: {} };
+  if (Object.hasOwn(sc, "descriptor_sha256")) return sc.descriptor_sha256 === null ? null : { sha256: sc.descriptor_sha256, codes: {}, mods_loaders: null };
   if (!d) return null;
-  return { sha256: sha256(Buffer.from(jcs(d), "utf8")), codes: Object.fromEntries(Object.entries(d.engine?.codes ?? {}).map(([c, v]) => [c, v?.name ?? v])) };
+  const mods = d.mods;
+  const loaders = mods === undefined
+    ? null
+    : Array.isArray(mods?.loader) && mods.loader.every((x) => x && typeof x === "object" && typeof x.id === "string")
+      ? mods.loader.map((x) => x.id)
+      : [];
+  return { sha256: sha256(Buffer.from(jcs(d), "utf8")), codes: Object.fromEntries(Object.entries(d.engine?.codes ?? {}).map(([c, v]) => [c, v?.name ?? v])), mods_loaders: loaders };
 }
 
 const negativeFolders = (descriptor) => (descriptor ? NEGATIVE_FOLDERS.map((folder) => ({ folder, claimed: false, engine: null, places: [] })) : []);
 
-/** check.rs l.120-135: a JSON array of {name, sha256, default_enabled}, nothing else. */
+/** check.rs l.132-147: a JSON array of {name, sha256, default_enabled}, nothing else. */
 function readLoaders(file) {
   let list;
   try {
@@ -180,7 +202,7 @@ function check(p, sc) {
   const l = m?.integration?.link ?? null;
   const linkFiles = l ? [l.skill, ...(l.tools ?? []).map((t) => t.params), ...(l.triggers ?? []).map((t) => t.data), ...(l.events ?? []).map((e) => e.data)].filter((x) => typeof x === "string") : [];
   if (linkFiles.length) notices.push({ code: "link-schemas-unvalidated", step: 3, detail: "the params/data schemas are not yet held to link-v1.md §6's restricted profile: that waits for link-v1 to freeze" });
-  // check.rs l.443-515
+  // check.rs l.482-554
   const proxies = (m?.integration?.loader?.proxies ?? []).map((x) => String(x).toLowerCase());
   const rows = Object.hasOwn(sc, "loaders_files") ? sc.loaders_files : (m?.game_files ?? []).map((g) => {
     const dest = String(g.to);
@@ -199,7 +221,9 @@ function check(p, sc) {
     integration,
     descriptor,
     negative_folders: negativeFolders(descriptor),
-    link: l ? { files: linkFiles.length, schemas_validated: false, why: "validating params/data schemas against link-v1.md §6's restricted profile waits for link-v1 to freeze" } : null,
+    // manifest.md §2.6.1's consent digest (0.5.1): sha256(JCS([integration.link] as parsed)),
+    // the same function lib/model.mjs's linkOf uses, so the two agree by construction.
+    link: l ? { digest: sha256(Buffer.from(jcs(l), "utf8")), files: linkFiles.length, schemas_validated: false, why: "validating params/data schemas against link-v1.md §6's restricted profile waits for link-v1 to freeze" } : null,
     built_on: claim ? { id: claim.id, version: claim.version, verified: false, claimed: claim } : null,
     code_changed: null,
     loaders: m ? { allowlist: p.opts.loaders ?? null, allowlist_entries: allowlist ? allowlist.length : null, hijack_names: HIJACK_NAMES, files: rows } : null,
@@ -267,7 +291,7 @@ function compat(p, sc) {
   }, findings, sc);
 }
 
-// main.rs l.542-558
+// main.rs l.545-561
 if (argv[0] === "--version") {
   process.stdout.write(`gi-probe ${tool.version} (source tree sha256 ${tool.source_tree_sha256})\n`);
   process.exit(0);
