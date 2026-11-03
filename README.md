@@ -110,9 +110,14 @@ advance:
 - **Routine rotation needs no ceremony and no client release**: put the next
   key in `GAMES_SIGNING_KEY_NEXT`, and the signer switches to it; clients
   already accept it. The key rotated away from is spent, and the signer never
-  goes back to it.
+  goes back to it. Spent is per document schema, not per kind (minice design
+  §11a.9; AstraPlugins `games-index-v1.md` §3): the index and the withdrawn
+  list are signed and served on separate schedules, and a client retires
+  `current` for one of them only when a `next`-signed document of that same
+  schema arrives, so a withdrawn list is never refused because the index
+  rotated first. `floors.json` on `data` records the spent key ids per schema.
 - **A root ceremony** (the owner's one passphrase) happens only on a
-  compromise, when both games keys are spent, or to add a kind: it re-signs
+  compromise, when both games keys are spent for a schema, or to add a kind: it re-signs
   `trust.json` without the bad key and with a fresh `next`.
 - Inside the document, `key_id` names the role (`games-current` or
   `games-next`, as AstraPlugins' schema enumerates); the signature's

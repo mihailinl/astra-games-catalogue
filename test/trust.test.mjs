@@ -10,10 +10,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 
 import { privateKeyFromSeed, signEnvelope } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
 import { INDEX_SCHEMA, verifyDocuments, WITHDRAWN_SCHEMA } from "../lib/documents.mjs";
+import { selectSigner, signBoth, spentBySchema } from "../lib/signing.mjs";
+import { loadState, writeJson } from "../lib/state.mjs";
 import { loadTrust } from "../lib/trust.mjs";
 import { candidate, kindKeyRow, makeCatalogue, makeTrust, rootsOf, T0 } from "./catalogue.mjs";
 import { throwawayKey } from "./helpers.mjs";
@@ -76,9 +79,98 @@ test("rotation: setting GAMES_SIGNING_KEY_NEXT is the whole change; the same tru
   assert.deepEqual(index.signed.entries, before.signed.entries, "the content did not change");
   // the old document still verifies too: clients accept both keys
   assert.deepEqual(both(c, before, JSON.parse(JSON.stringify(withdrawn)))[0], []);
-  // and the rotated-away key is spent: the signer never slides back to it
-  assert.deepEqual(c.state("floors.json").spent, ["astra-games-2026a"]);
+  // and the rotated-away key is spent, for each schema this run signed with
+  // next: the signer never slides back to it
+  assert.deepEqual(c.state("floors.json").spent, { [INDEX_SCHEMA]: ["astra-games-2026a"], [WITHDRAWN_SCHEMA]: ["astra-games-2026a"] });
   assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 } }), /E_KEY_RETIRED/);
+});
+
+// ── spent is per DOCUMENT SCHEMA, not per kind (minice design §11a.9) ──────
+
+const SPENT_A = "astra-games-2026a";
+
+function perSchema(c) {
+  const currentEnv = { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 };
+  const nextEnv = { ...currentEnv, GAMES_SIGNING_KEY_NEXT: c.next.seedB64 };
+  const pick = (env, schema, floors) => selectSigner({ env, floors, kindKeys: c.kindKeys, now: T0, schema });
+  const signWith = (state, indexEnv, withdrawnEnv) =>
+    signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+      signers: { [INDEX_SCHEMA]: pick(indexEnv, INDEX_SCHEMA, state.floors), [WITHDRAWN_SCHEMA]: pick(withdrawnEnv, WITHDRAWN_SCHEMA, state.floors) } });
+  return { currentEnv, nextEnv, pick, signWith };
+}
+
+test("spent is per schema: an index signed by next, then a withdrawn list signed by current, is accepted", () => {
+  const c = makeCatalogue();
+  c.sign({ candidates: [candidate()] });
+  const { currentEnv, nextEnv, pick, signWith } = perSchema(c);
+  const state = loadState(c.data);
+
+  const first = signWith(state, nextEnv, currentEnv);
+  assert.equal(first.index.signed.key_id, "games-next");
+  assert.equal(first.index.signatures[0].key_id, "astra-games-2026b");
+  assert.equal(first.withdrawn.signed.key_id, "games-current");
+  assert.equal(first.withdrawn.signatures[0].key_id, SPENT_A);
+  assert.deepEqual(both(c, first.index, first.withdrawn), [[], []], "both verify: clients accept both keys");
+  assert.deepEqual(first.floors.spent, { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [] }, "next signed only the index, so current is spent only for the index");
+
+  state.floors = first.floors;
+  assert.equal(pick(currentEnv, WITHDRAWN_SCHEMA, state.floors).key_id, SPENT_A, "the withdrawn list may still be signed by current");
+  assert.equal(signWith(state, nextEnv, currentEnv).withdrawn.signed.key_id, "games-current", "and is, again, while the index stays on next");
+  assert.throws(() => pick(currentEnv, INDEX_SCHEMA, state.floors), /E_KEY_RETIRED: astra-games-2026a was rotated away from for astra\.games\.index\/1/, "the index never goes back to current");
+  // signBoth checks the ledger itself, whatever floors a signer was picked under
+  assert.throws(
+    () => signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+      signers: { [INDEX_SCHEMA]: pick(currentEnv, INDEX_SCHEMA, {}), [WITHDRAWN_SCHEMA]: pick(currentEnv, WITHDRAWN_SCHEMA, {}) } }),
+    /E_KEY_RETIRED: astra-games-2026a is spent for astra\.games\.index\/1/,
+  );
+  assert.throws(
+    () => signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+      signers: { [INDEX_SCHEMA]: pick(nextEnv, WITHDRAWN_SCHEMA, state.floors), [WITHDRAWN_SCHEMA]: pick(currentEnv, WITHDRAWN_SCHEMA, state.floors) } }),
+    /E_SCHEMA/, "a signer picked for one schema does not sign the other",
+  );
+
+  // the run itself picks one role for both documents: with only current, the index refuses it, and nothing is written
+  writeJson(path.join(c.data, "floors.json"), state.floors);
+  const served = fs.readFileSync(path.join(c.data, "dist", "games-withdrawn.json"), "utf8");
+  assert.throws(() => c.sign({ env: currentEnv }), /E_KEY_RETIRED: .* astra\.games\.index\/1/);
+  assert.equal(fs.readFileSync(path.join(c.data, "dist", "games-withdrawn.json"), "utf8"), served, "a refused run writes nothing");
+  const run = c.sign({ env: nextEnv });
+  assert.equal(run.keyId, "astra-games-2026b");
+  assert.deepEqual(c.state("floors.json").spent, { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [SPENT_A] });
+});
+
+test("spent is per schema: a withdrawn list signed by current after a next-signed withdrawn list is refused", () => {
+  const c = makeCatalogue();
+  c.sign();
+  const { currentEnv, nextEnv, pick, signWith } = perSchema(c);
+  const state = loadState(c.data);
+
+  // the withdrawn list moves first this time; the index stays on current
+  state.floors = signWith(state, currentEnv, nextEnv).floors;
+  assert.deepEqual(state.floors.spent, { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [SPENT_A] });
+  assert.throws(() => pick(currentEnv, WITHDRAWN_SCHEMA, state.floors), /E_KEY_RETIRED: astra-games-2026a was rotated away from for astra\.games\.withdrawn\/1/);
+  assert.throws(() => signWith(state, currentEnv, currentEnv), /E_KEY_RETIRED/);
+  assert.equal(pick(currentEnv, INDEX_SCHEMA, state.floors).key_id, SPENT_A, "the index has not moved, so it may");
+  // and the ledger only moves forward: a later current-signed index spends nothing back
+  state.floors = signWith(state, currentEnv, nextEnv).floors;
+  assert.deepEqual(state.floors.spent, { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [SPENT_A] });
+});
+
+test("the per-kind ledger written before 2026-11-02 counts for both schemas; any other shape refuses the run", () => {
+  const legacy = spentBySchema({ spent: [SPENT_A] });
+  assert.deepEqual(Object.fromEntries(Object.entries(legacy).map(([k, v]) => [k, [...v]])), { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [SPENT_A] },
+    "one key signed both documents in every run then, so a key spent then is spent for both");
+  const c = makeCatalogue();
+  const { currentEnv, pick } = perSchema(c);
+  for (const schema of [INDEX_SCHEMA, WITHDRAWN_SCHEMA]) assert.throws(() => pick(currentEnv, schema, { spent: [SPENT_A] }), /E_KEY_RETIRED/);
+  for (const spent of ["x", null, 7, [1], [""], {}, { [INDEX_SCHEMA]: [] }, { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: "x" },
+    { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [], "astra.commands.index/1": [] }]) {
+    assert.throws(() => spentBySchema({ spent }), /E_STATE_SPENT/, JSON.stringify(spent));
+  }
+  assert.throws(() => pick(currentEnv, "astra.commands.index/1", {}), /E_SCHEMA/);
+  writeJson(path.join(c.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0, spent: { [INDEX_SCHEMA]: [] } });
+  assert.throws(() => c.sign(), /E_STATE_SPENT/);
+  assert.equal(fs.existsSync(path.join(c.data, "dist")), false, "a refused run writes nothing");
 });
 
 test("a body naming one role signed by the other role's key is refused", () => {
