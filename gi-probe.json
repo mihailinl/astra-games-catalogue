@@ -1,7 +1,8 @@
 {
-  "$comment": "The gi-probe build ingest runs (A§5.2 step 5; merged R28). It ships with astra-game-launcher 0.5.0, which is not released yet, so `version` is null and ingest WAITS (W_PROBE_UNAVAILABLE) on every release: nothing is listed without a probe. When 0.5.0 is released, fill version, url and sha256 (the Linux x86_64 binary's digest) in one pull request; bin/fetch-gi-probe.mjs refuses a download whose digest differs.",
+  "$comment": "The gi-probe build ingest runs (A§5.2 step 5; merged R28): astra-game-launcher 0.5.0's static-pie musl Linux x86_64 binary, released 2026-11-01 with the owner's word (tag v0.5.0 on 6d1851b; spec pin c07b3ad). bin/fetch-gi-probe.mjs refuses a download whose digest differs. 0.5.0 implements games content rounds 1-2; round 3 (AstraPlugins #129) is this catalogue's own check until gi-probe 0.5.1, which re-pins here.",
   "schema": "astra.games.gi-probe/1",
-  "version": null,
-  "url": null,
-  "sha256": null
+  "source_tree_sha256": "9c6f9cf33b89e38fe99c93286416ce97696cc351f247c8d13948ded6bc5abefb",
+  "version": "0.5.0",
+  "url": "https://github.com/mihailinl/astra-game-launcher/releases/download/v0.5.0/gi-probe-linux-x64",
+  "sha256": "50b15f09f4e5c01eb5ab46dda65df86a4289bb240c17eb0781ab9a362cdf3459"
 }

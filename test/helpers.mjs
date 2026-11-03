@@ -12,6 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { effectiveLoaders } from "../lib/model.mjs";
+import { binaryProbe } from "../lib/probe.mjs";
+
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const STAGING = path.join(ROOT, "fixtures", "staging");
 export const fixture = (f) => JSON.parse(fs.readFileSync(path.join(STAGING, f), "utf8"));
@@ -164,30 +167,32 @@ export function fakeSteam() {
   };
 }
 
-/** A gi-probe stub that agrees with the manifest it is given. */
-export function stubProbe({ manifestId, version, descriptorSha = null, files = {}, findings = [], gameFiles = [], extra = {} }) {
-  const calls = [];
-  return {
-    calls,
-    async ingest(args) {
-      calls.push(args);
-      return {
-        probe: "gi-probe-stub",
-        version: "0.0.0-test",
-        findings,
-        manifest_id: manifestId,
-        manifest_version: version,
-        descriptor_sha256: descriptorSha,
-        game_files: gameFiles,
-        files: { "BepInEx/plugins/Staging.dll": "d".repeat(64), ...files },
-        link: null,
-        schema_digests: {},
-        code_changed: null,
-        compat: null,
-        ...extra,
-      };
-    },
-  };
+/** fixtures/gi-probe/fake-gi-probe.mjs: a fake gi-probe 0.5.0 binary (no real gi-probe ever runs in a test). */
+export const FAKE_GI_PROBE = path.join(ROOT, "fixtures", "gi-probe", "fake-gi-probe.mjs");
+
+/** The pin the tests hold the fake to: gi-probe 0.5.0, by version and source tree. */
+export const PIN_050 = Object.freeze({ version: "0.5.0", source_tree_sha256: "9c6f9cf33b89e38fe99c93286416ce97696cc351f247c8d13948ded6bc5abefb" });
+
+/**
+ * lib/probe.mjs's production binaryProbe, running the fake binary. It agrees
+ * with the release it is shown unless `scenario` says otherwise (the fake's
+ * header lists the members); `calls` is every command line it was given.
+ */
+export function fakeProbe(scenario = {}, { pin = PIN_050 } = {}) {
+  const dir = tmpdir("agc-probe-");
+  const file = path.join(dir, "scenario.json");
+  const log = path.join(dir, "argv.jsonl");
+  fs.writeFileSync(file, JSON.stringify(scenario));
+  const probe = binaryProbe({ env: { ...process.env, GI_PROBE: FAKE_GI_PROBE, FAKE_GI_PROBE_SCENARIO: file, FAKE_GI_PROBE_LOG: log }, pin });
+  Object.defineProperty(probe, "calls", {
+    get: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []),
+  });
+  return probe;
+}
+
+/** The effective loaders[] of the seed on main, as ingest hands them to gi-probe. */
+export function seedLoaders() {
+  return effectiveLoaders(JSON.parse(fs.readFileSync(path.join(ROOT, "loaders.json"), "utf8")), null);
 }
 
 /** A throwaway Ed25519 pair as the signing environment holds it: base64 of the raw 32-byte seed. */

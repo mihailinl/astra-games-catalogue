@@ -37,7 +37,7 @@ import path from "node:path";
 import { githubApi } from "../lib/github.mjs";
 import { LEASE_ID } from "../lib/ingest.mjs";
 import {
-  ingestResultBody, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody,
+  ingestResultBody, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { loadPolicy, writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
@@ -146,6 +146,8 @@ export async function signReport({ reportFile, env = process.env, client = servi
   if (!/^[0-9a-f]{40}$/.test(String(env.DATA_SHA))) throw new Error("DATA_SHA is not the data commit");
   const failed = [];
   try {
+    const unnamed = signUnnamed(report);
+    if (unnamed) log.warn(`${unnamed} accepted item(s) name no lease (an unreadable candidate); left out, their leases expire and are re-leased`);
     await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
     log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
   } catch (e) {

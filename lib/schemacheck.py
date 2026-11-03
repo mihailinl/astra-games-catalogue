@@ -21,6 +21,20 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
          | {"ok": false, "error": "..."}
     python3 lib/schemacheck.py zipcheck ZIP
         -> {"ok": true} | {"ok": false, "error": "..."}   (Zip Cloaking, see verify_zip_headers)
+    python3 lib/schemacheck.py files ZIP
+        -> {"ok": true, "files": {"<path in zip>": "<sha256>", ...}} | {"ok": false, "error": "..."}
+
+`manifest` also returns `text`, the member's own UTF-8 text, so that
+gi-probe's `validate-descriptor` reads the bytes the author shipped rather
+than this file's re-serialisation of them.
+
+`files` is the catalogue's own reading of every file in the zip: its name
+(`\\` read as `/`, as gi-probe's check reads entry names) and the SHA-256
+of its inflated bytes. built_on, code_changed, the game files' digests, the
+Link skill and schema digests all come from it; gi-probe 0.5.0 reports none
+of them at the top level. It holds the zip to the launcher's own default
+limits (astra-game-launcher v0.5.0 src/package.rs `Limits::default`: 20 000
+entries, 1 GiB inflated), so a zip gi-probe opened is always read whole.
 
 `manifest` reads astra-gi.toml from the root of a release zip with
 `tomllib`, the same parser AstraPlugins' check-games-goldens.py uses. It reads
@@ -165,7 +179,7 @@ def manifest(zip_path):
     try:
         text = raw.decode("utf-8")
         parsed = tomllib.loads(text)
-        return {"ok": True, "manifest": _jsonable(parsed, "$")}
+        return {"ok": True, "manifest": _jsonable(parsed, "$"), "text": text}
     except (UnicodeDecodeError, tomllib.TOMLDecodeError, ValueError) as e:
         return {"ok": False, "error": f"{MANIFEST_NAME}: {e}"}
 
@@ -1487,6 +1501,40 @@ def content_report(zip_path, declared):
     }
 
 
+# The launcher's own default zip limits (astra-game-launcher v0.5.0
+# src/package.rs, `Limits::default`): a zip gi-probe opened is inside them.
+FILES_MAX_ENTRIES = 20_000
+FILES_MAX_INFLATED = 1024 * 1024 * 1024
+
+
+def zip_files(zip_path):
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            infos = [i for i in z.infolist() if not i.is_dir()]
+            if len(infos) > FILES_MAX_ENTRIES:
+                return {"ok": False, "error": f"the zip has {len(infos)} files, over {FILES_MAX_ENTRIES}"}
+            out = {}
+            total = 0
+            for info in infos:
+                name = info.filename.replace("\\", "/")
+                if name in out:
+                    return {"ok": False, "error": f"{name} is in the zip twice"}
+                h = hashlib.sha256()
+                with z.open(info) as f:
+                    while True:
+                        chunk = f.read(1 << 20)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > FILES_MAX_INFLATED:
+                            return {"ok": False, "error": f"the zip inflates past {FILES_MAX_INFLATED} bytes"}
+                        h.update(chunk)
+                out[name] = h.hexdigest()
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError, EOFError, zlib.error) as e:
+        return {"ok": False, "error": f"not a readable zip: {e}"}
+    return {"ok": True, "files": out}
+
+
 def toml_file(path):
     try:
         with open(path, "rb") as f:
@@ -1512,6 +1560,9 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "content":
         req = json.load(sys.stdin)
         json.dump(content_report(argv[2], req.get("declared", [])), sys.stdout, ensure_ascii=False)
+        return 0
+    if len(argv) == 3 and argv[1] == "files":
+        json.dump(zip_files(argv[2]), sys.stdout, ensure_ascii=False)
         return 0
     if len(argv) == 3 and argv[1] == "zipcheck":
         json.dump(verify_zip_headers(argv[2]), sys.stdout, ensure_ascii=False)

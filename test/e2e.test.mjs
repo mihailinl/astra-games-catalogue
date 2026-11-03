@@ -17,7 +17,7 @@ import { bindingTokenSha256, ingestRelease } from "../lib/ingest.mjs";
 import { descriptorDigest } from "../lib/model.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { emptyModeration } from "../lib/state.mjs";
-import { ROOT, fakeGh, fakeGithub, fakeSteam, fixture, fixtureText, makeZip, sha256, stubProbe, tmpdir } from "./helpers.mjs";
+import { ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
 
 const reserved = loadReserved();
 const firstParty = JSON.parse(fs.readFileSync(path.join(ROOT, "first-party.json"), "utf8"));
@@ -27,13 +27,13 @@ async function ingest({ zip, repo, tag, manifestId, version, descriptorSha = nul
   const release = { ...fixture("release.json"), tag_name: tag };
   return ingestRelease({
     request: { lease_id: `lease-${repo.id}`, repo_id: repo.id, tag, binding_token_sha256: bindingTokenSha256("stagingBindingToken_0123456789abcdef"), confirmed: [] },
-    policy: { firstParty, loadersFile: path.join(ROOT, "loaders.json") },
+    policy: { firstParty, loaders: seedLoaders() },
     state: state0(),
     reserved,
     deps: {
       github: fakeGithub({ zip, repo, release }),
       gh: fakeGh({ sha: sha256(zip), certificate }),
-      probe: stubProbe({ manifestId, version, descriptorSha }),
+      probe: fakeProbe(),
       steam: fakeSteam(),
       workdir: tmpdir(),
       now: () => T0,

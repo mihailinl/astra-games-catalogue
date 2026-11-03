@@ -48,8 +48,11 @@ catalogue gives you is *where it came from*, not a promise that it is safe.
   `first-party.json` and the catalogue signs exactly those bytes. This is
   what Astra 0.2.7 already trusts through its compiled pins.
 - **Every release** passed `gi-probe` (the launcher's own manifest and
-  descriptor parser), the schemas in AstraPlugins' `spec/games/`, the engine
-  code rules, and the anti-cheat and online-game checks.
+  descriptor parser: `gi-probe check`, plus `validate-descriptor` for a
+  foundation that owns an engine code and `compat` for a first-party release
+  Astra 0.2.7 installs; `lib/probe.mjs` holds the table), the schemas in
+  AstraPlugins' `spec/games/`, the engine code rules, and the anti-cheat and
+  online-game checks.
 
 - **Every content part** (animations, a character model, art, audio) was
   confirmed by the author on the site, part by part, under the current
@@ -131,7 +134,7 @@ abandoned code moves only by a moderator act that cites its evidence.
 |---|---|
 | `first-party.json` | the owner's repositories by GitHub `repository_id`, and the per-release digest pins |
 | `loaders.json` | the seed allowlist of loader builds that ship off by default (A§4.5); moderator acts add or remove on top |
-| `gi-probe.json` | the pinned `gi-probe` build ingest runs; null until astra-game-launcher 0.5.0, and ingest waits until then |
+| `gi-probe.json` | the pinned `gi-probe` build ingest runs: `version`, the Linux binary's `url` and `sha256`, and the build's `source_tree_sha256` every report must carry; with no `version`, ingest waits |
 | `.github/action-pins.json` | every action, by the commit its release tag peels to |
 | `fixtures/` | the staging fixtures ingest is tested against, and the list-shape recordings (R29) |
 | `lib/`, `bin/` | ingest, signing, acts, promotion; `lib/vendor/` holds the pinned copies |
