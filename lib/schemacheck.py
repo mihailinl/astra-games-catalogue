@@ -31,9 +31,9 @@ than this file's re-serialisation of them.
 `files` is the catalogue's own reading of every file in the zip: its name
 (`\\` read as `/`, as gi-probe's check reads entry names) and the SHA-256
 of its inflated bytes. built_on, code_changed, the game files' digests, the
-Link skill and schema digests all come from it; gi-probe 0.5.0 reports none
+Link skill and schema digests all come from it; gi-probe 0.5.1 reports none
 of them at the top level. It holds the zip to the launcher's own default
-limits (astra-game-launcher v0.5.0 src/package.rs `Limits::default`: 20 000
+limits (astra-game-launcher v0.5.1 src/package.rs `Limits::default`, unchanged from 0.5.0: 20 000
 entries, 1 GiB inflated), so a zip gi-probe opened is always read whole.
 
 `manifest` reads astra-gi.toml from the root of a release zip with
@@ -1501,8 +1501,8 @@ def content_report(zip_path, declared):
     }
 
 
-# The launcher's own default zip limits (astra-game-launcher v0.5.0
-# src/package.rs, `Limits::default`): a zip gi-probe opened is inside them.
+# The launcher's own default zip limits (astra-game-launcher v0.5.1
+# src/package.rs, `Limits::default`, unchanged from 0.5.0): a zip gi-probe opened is inside them.
 FILES_MAX_ENTRIES = 20_000
 FILES_MAX_INFLATED = 1024 * 1024 * 1024
 

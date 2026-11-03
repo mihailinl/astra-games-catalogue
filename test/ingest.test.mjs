@@ -16,7 +16,7 @@ import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { emptyModeration } from "../lib/state.mjs";
-import { PIN_050, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
+import { PIN_051, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
 
 const reserved = loadReserved();
 const firstParty = JSON.parse(fs.readFileSync(path.join(ROOT, "first-party.json"), "utf8"));
@@ -162,7 +162,7 @@ test("an attestation for other bytes is refused", async () => {
 });
 
 test("gi-probe absent: production fails closed with W_PROBE_UNAVAILABLE", async () => {
-  for (const probe of [binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: PIN_050 }), binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: { version: null } })]) {
+  for (const probe of [binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: PIN_051 }), binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: { version: null } })]) {
     const c = await run({ probe });
     assert.equal(c.verdict, "wait");
     assert.ok(codes(c).includes("W_PROBE_UNAVAILABLE"));
@@ -170,9 +170,9 @@ test("gi-probe absent: production fails closed with W_PROBE_UNAVAILABLE", async 
   }
 });
 
-// The fake answers in gi-probe 0.5.0's own spelling: a finding is {code,
-// step, field?, detail, params?} (main.rs l.113-123; codes as check.rs and
-// tests/gi_probe.rs l.3213-3220 raise them), and a refusal is verdict fail,
+// The fake answers in gi-probe 0.5.1's own spelling: a finding is {code,
+// step, field?, detail, params?} (main.rs l.116-126; codes as check.rs and
+// tests/gi_probe.rs l.3546-3553 raise them), and a refusal is verdict fail,
 // exit 1.
 test("a gi-probe check finding refuses E_PROBE, in gi-probe's own code and words", async () => {
   const c = await run({ probe: fakeProbe({ check: { findings: [{ code: "loader-undeclared", step: 2, field: "game_files", detail: "winhttp.dll is placed and [integration.loader] does not declare it", params: { file: "winhttp.dll" } }] } }) });
@@ -181,6 +181,15 @@ test("a gi-probe check finding refuses E_PROBE, in gi-probe's own code and words
   assert.ok(f, JSON.stringify(c.findings));
   assert.equal(f.probe_code, "loader-undeclared");
   assert.match(f.message, /^gi-probe check loader-undeclared \(game_files\): winhttp\.dll is placed/);
+});
+
+test("a gi-probe mods-invalid finding (0.5.1: spec §7.9, a descriptor's own mods table) refuses E_PROBE the same as any other code — the mapping never keys off a specific gi-probe code, so a new one is never silently dropped", async () => {
+  const c = await run({ probe: fakeProbe({ check: { findings: [{ code: "mods-invalid", step: 1, field: "integration.engine.mods.loader[0].id", detail: "mods (spec §7.9): ingest refuses the descriptor; a client drops only its mods and detects with it as without", params: { reason: "code-undeclared" } }] } }) });
+  assert.equal(c.verdict, "refuse");
+  const f = c.findings.find((x) => x.code === "E_PROBE");
+  assert.ok(f, JSON.stringify(c.findings));
+  assert.equal(f.probe_code, "mods-invalid");
+  assert.match(f.message, /^gi-probe check mods-invalid \(integration\.engine\.mods\.loader\[0\]\.id\): mods/);
 });
 
 test("gi-probe reading another id, version or descriptor than the catalogue refuses E_PROBE_DISAGREES", async () => {
@@ -192,11 +201,11 @@ test("gi-probe reading another id, version or descriptor than the catalogue refu
   assert.ok(codes(c).includes("E_PROBE_DISAGREES"), "a descriptor the catalogue does not see");
 });
 
-test("a report the catalogue cannot read as gi-probe 0.5.0's is W_PROBE_UNAVAILABLE, never accept and never a refusal", async () => {
+test("a report the catalogue cannot read as gi-probe 0.5.1's is W_PROBE_UNAVAILABLE, never accept and never a refusal", async () => {
   const cases = {
     "stdout that is not JSON": { check: { stdout: "Segmentation fault\n", exit: 0 } },
     "another schema": { check: { patch: { schema: "astra.gi-probe/2" } } },
-    "another tool.version": { tool: { version: "0.5.1" } },
+    "another tool.version": { tool: { version: "0.5.2" } },
     "another source tree": { tool: { source_tree_sha256: "0".repeat(64) } },
     "another subcommand's report": { check: { patch: { subcommand: "compat" } } },
     "a pass with findings": { check: { findings: [{ code: "zip-traversal", step: 1, detail: "../evil" }], exit: 0 } },
@@ -244,16 +253,20 @@ test("the entry's game files, Link summary and schema digests come from the cata
 test("[integration.link] gets a digest (manifest.md §2.6.1), and gi-probe check's own link.digest (0.5.1+) must agree with it", async () => {
   const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "context = true", "shares_other_players = false", ""].join("\n");
   const zip = stagingZip(text);
+  // the default fake gi-probe 0.5.1 now computes link.digest itself
+  // (fixtures/gi-probe/fake-gi-probe.mjs), the same way lib/model.mjs's linkOf
+  // does: this run already proves the two agree (verdict is accept, not a
+  // refusal), with no scenario patch needed.
   const c = await run({ zip });
   assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
   assert.equal(typeof c.entry.link.digest, "string");
   assert.match(c.entry.link.digest, /^[0-9a-f]{64}$/);
-  // gi-probe 0.5.0's fake agrees by default (no link.digest at all: 0.5.0 never reports one)
-  const agreeing = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: c.entry.link.digest } } } }) });
-  assert.equal(agreeing.verdict, "accept", JSON.stringify(agreeing.findings));
-  // a disagreeing link.digest (as 0.5.1 would report it) refuses E_PROBE_DISAGREES
+  // a disagreeing link.digest (a build with a bug, or another parser) refuses E_PROBE_DISAGREES
   const disagreeing = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: "f".repeat(64) } } } }) });
   assert.ok(codes(disagreeing).includes("E_PROBE_DISAGREES"), JSON.stringify(disagreeing.findings));
+  // a probe reporting no digest at all (0.5.0's shape) is read as before: no comparison, still accept
+  const noDigest = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: undefined } } } }) });
+  assert.equal(noDigest.verdict, "accept", JSON.stringify(noDigest.findings));
 });
 
 test("a VAC game and a game a moderator refused are refused; an online game is only flagged", async () => {
@@ -534,7 +547,7 @@ test("Check now: a lease with no tag ingests the latest stable release, and a re
   assert.equal(none.request.tag, null);
 });
 
-// ── gi-probe 0.5.0's subcommands, by release (lib/probe.mjs's table) ─────
+// ── gi-probe 0.5.1's subcommands, by release (lib/probe.mjs's table) ─────
 
 function fooFoundation(probe) {
   const zip = makeZip({ "astra-gi.toml": fixtureText("foo-engine.toml"), "foo/runtime.dll": "x" });
@@ -551,7 +564,7 @@ test("a community integration runs check alone, --provenance community, with loa
   const list = JSON.parse(fs.readFileSync(argv[argv.indexOf("--loaders") + 1], "utf8"));
   assert.ok(Array.isArray(list) && list.length > 0);
   for (const l of list) assert.deepEqual(Object.keys(l).sort(), ["default_enabled", "name", "sha256"]);
-  assert.deepEqual(c.meta.probe, { name: "gi-probe", version: "0.5.0", source_tree_sha256: PIN_050.source_tree_sha256, ran: ["check"], notices: [] });
+  assert.deepEqual(c.meta.probe, { name: "gi-probe", version: "0.5.1", source_tree_sha256: PIN_051.source_tree_sha256, ran: ["check"], notices: [] });
 });
 
 test("a foundation that owns a code runs validate-descriptor on its astra-gi.toml as shipped; a digest it disagrees on refuses", async () => {
