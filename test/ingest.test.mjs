@@ -241,6 +241,21 @@ test("the entry's game files, Link summary and schema digests come from the cata
   assert.ok(codes(other).includes("E_PROBE_DISAGREES"), JSON.stringify(other.findings));
 });
 
+test("[integration.link] gets a digest (manifest.md §2.6.1), and gi-probe check's own link.digest (0.5.1+) must agree with it", async () => {
+  const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "context = true", "shares_other_players = false", ""].join("\n");
+  const zip = stagingZip(text);
+  const c = await run({ zip });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(typeof c.entry.link.digest, "string");
+  assert.match(c.entry.link.digest, /^[0-9a-f]{64}$/);
+  // gi-probe 0.5.0's fake agrees by default (no link.digest at all: 0.5.0 never reports one)
+  const agreeing = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: c.entry.link.digest } } } }) });
+  assert.equal(agreeing.verdict, "accept", JSON.stringify(agreeing.findings));
+  // a disagreeing link.digest (as 0.5.1 would report it) refuses E_PROBE_DISAGREES
+  const disagreeing = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: "f".repeat(64) } } } }) });
+  assert.ok(codes(disagreeing).includes("E_PROBE_DISAGREES"), JSON.stringify(disagreeing.findings));
+});
+
 test("a VAC game and a game a moderator refused are refused; an online game is only flagged", async () => {
   const vac = fixtureText("astra-gi.toml").replace("steam_appid = 4000001", "steam_appid = 4000002");
   const a = await run({ zip: stagingZip(vac) });
