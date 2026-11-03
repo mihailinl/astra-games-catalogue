@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at db52804689bb7ed785c67cac9dc31b15da590477, path testdata/games/manifests/invalid/reserved-name.toml.
+# VENDORED from mihailinl/AstraPlugins at c7ae74ab89c200f52318a08dcf4095cd436b181f, path testdata/games/manifests/invalid/reserved-name.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Invalid: reserved-name. integration.name contains "Official"

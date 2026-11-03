@@ -119,8 +119,8 @@ test("what gi-probe 0.5.0 does not report comes from the catalogue's own reading
   };
   const l = linkOf(manifest, files);
   assert.deepEqual(l.problems, []);
-  // games-index-v1.schema.json linkSummary, `digest` left out: no spec defines the consent digest's canonical form
-  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64) });
+  // manifest.md §2.6.1: digest is SHA-256(JCS([integration.link] as parsed)); vectors.json's "game-specific-link" vector pins this exact value
+  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64), digest: "e26a440ebf1c3cacc9891fc8b031d9c0d8cbde9276ceeba68d1866a972a35ea2" });
   assert.deepEqual(l.schemaDigests, { "astra/tools/drop_item.json": "2".repeat(64), "astra/triggers/boss_spawned.json": "3".repeat(64), "astra/events/player_died.json": "4".repeat(64) });
   const { "astra/SKILL.md": _, ...noSkill } = files;
   assert.equal(linkOf(manifest, noSkill).problems.length, 1);
