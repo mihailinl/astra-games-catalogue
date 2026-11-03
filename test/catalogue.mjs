@@ -21,8 +21,11 @@ import { ROOT, throwawayKey, tmpdir } from "./helpers.mjs";
 
 export const T0 = 1793448000; // 2026-10-31T12:00:00Z
 export const NOT_BEFORE = "2026-10-01T00:00:00Z";
+// §5: a kind's next key starts strictly after its current one. The ceremony
+// uses current + 60 s (ops runbooks/kind-keys), and so do these fixtures.
+export const NOT_BEFORE_NEXT = "2026-10-01T00:01:00Z";
 
-export function kindKeyRow(kind, role, key_id, key, not_before = NOT_BEFORE) {
+export function kindKeyRow(kind, role, key_id, key, not_before = role === "next" ? NOT_BEFORE_NEXT : NOT_BEFORE) {
   return { kind, role, key_id, alg: "ed25519", public_key: key.publicB64, not_before };
 }
 
