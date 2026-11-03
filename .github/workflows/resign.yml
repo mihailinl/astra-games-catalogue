@@ -24,6 +24,10 @@ concurrency:
 jobs:
   resign:
     name: Re-sign both documents
+    # Nothing is signed before the games service is live and the kind keys
+    # exist; the daily schedule SKIPS until GAMES_LIVE is "true" (see
+    # ingest.yml). A manual dispatch always runs.
+    if: github.event_name == 'workflow_dispatch' || vars.GAMES_LIVE == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: publish-games
