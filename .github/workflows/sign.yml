@@ -51,8 +51,10 @@ jobs:
     # Only this repository's ingest.yml, run on main by the waker or the
     # schedule, may hand candidates to the signer; a branch's workflow named
     # "Ingest" never does. A failed leg still leaves the others' candidates.
+    # GAMES_LIVE: see ingest.yml's work job. A workflow_run waits for it too.
     if: >-
-      github.event_name != 'workflow_run' || (
+      github.event_name == 'workflow_dispatch' || (
+        vars.GAMES_LIVE == 'true' &&
         github.event.workflow_run.head_branch == 'main' &&
         github.event.workflow_run.path == '.github/workflows/ingest.yml' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&

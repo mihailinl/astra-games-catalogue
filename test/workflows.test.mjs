@@ -218,3 +218,17 @@ test("the signer and the re-signer share one concurrency group; nothing cancels 
     assert.match(t, /concurrency:\n\s+group: publish-games\n\s+cancel-in-progress: false/);
   }
 });
+
+test("until the games service is live, no scheduled or chained job runs: ingest, sign and resign wait for vars.GAMES_LIVE (a manual dispatch always runs)", () => {
+  // Before lane C deploys, a scheduled ingest every 15 minutes found no
+  // service, failed, and GitHub mailed the owner each time. A job whose `if`
+  // is false is SKIPPED, which is not a failure.
+  for (const [file, job] of [["ingest.yml", "work"], ["sign.yml", "work"], ["resign.yml", "resign"]]) {
+    const t = read(file);
+    const start = t.indexOf(`\n  ${job}:\n`);
+    assert.ok(start >= 0, `${file} has no job ${job}`);
+    const head = t.slice(start, t.indexOf("runs-on:", start));
+    assert.match(head, /github\.event_name == 'workflow_dispatch'/, `${file} ${job}: a manual dispatch must still run`);
+    assert.match(head, /vars\.GAMES_LIVE == 'true'/, `${file} ${job}: not gated on GAMES_LIVE`);
+  }
+});

@@ -38,6 +38,12 @@ permissions: {}
 jobs:
   work:
     name: Lease releases from the plugins service
+    # Until the games service is live (lane C deployed, kind keys signed), a
+    # scheduled run has no service to pull from and would fail every 15
+    # minutes, mailing the owner each time. The repository variable
+    # GAMES_LIVE is set to "true" at lane C's deploy step; until then the
+    # schedule SKIPS (not a failure). A manual dispatch always runs.
+    if: github.event_name == 'workflow_dispatch' || vars.GAMES_LIVE == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: games-service
