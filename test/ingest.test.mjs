@@ -15,6 +15,7 @@ import { bindingTokenSha256, ingestRelease, parseRequest } from "../lib/ingest.m
 import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
 import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
+import { MAX_PARTS, projectCandidate } from "../lib/service.mjs";
 import { emptyModeration } from "../lib/state.mjs";
 import { PIN_051, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
 
@@ -348,6 +349,50 @@ test("content: a declared path with no file refuses the whole release (E_CONTENT
   const c = await run({ zip });
   assert.equal(c.verdict, "refuse");
   assert.ok(codes(c).includes("E_CONTENT_MISSING"), JSON.stringify(c.findings));
+});
+
+// ── contract 6.13.0 §4.6: a candidate carries at most 1024 parts[] ──────
+
+function manifestWithParts(n) {
+  let m = fixtureText("astra-gi.toml");
+  for (let i = 0; i < n; i++) m += `\n[[integration.content]]\npath = "art/p${i}.png"\nkind = "art"\ntitle = "p${i}"\ncredit = "astra-staging-author"\nlicence = "CC0-1.0"\n`;
+  return m;
+}
+
+function releaseWithParts(n) {
+  const files = { "astra-gi.toml": manifestWithParts(n), "BepInEx/plugins/Staging.dll": Buffer.from("not really a dll") };
+  for (let i = 0; i < n; i++) files[`art/p${i}.png`] = CONTENT_PNG;
+  const confirmed = Array.from({ length: n }, (_, i) => ({ path: `art/p${i}.png`, sha256: sha256(CONTENT_PNG), text_id: "market.rights.art", text_version: 1 }));
+  return { zip: makeZipBytes(files), confirmed };
+}
+
+test("content: exactly 1024 declared parts (the manifest schema's maxItems bound) is accepted and carries content[1024]", async () => {
+  const { zip, confirmed } = releaseWithParts(MAX_PARTS);
+  const c = await run({ zip, request: { ...REQUEST, confirmed } });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(c.entry.content.length, MAX_PARTS);
+});
+
+test("content: 1025 declared parts is refused E_MANIFEST_INVALID before any service call, and the games catalogue's own candidate projection still never carries more than MAX_PARTS", async () => {
+  const { zip, confirmed } = releaseWithParts(MAX_PARTS + 1);
+  const c = await run({ zip, request: { ...REQUEST, confirmed } });
+  // The manifest schema (vendored from AstraPlugins, maxItems 1024 on
+  // [[integration.content]]) refuses it: the candidate never reaches
+  // "accept", never gets an entry, and nothing posts it to the service as
+  // a listed release -- this IS the ingest-time refusal, decided locally,
+  // before bin/service.mjs ever calls bot/games/ingest-results for it.
+  assert.equal(c.verdict, "refuse", JSON.stringify(c.findings));
+  assert.ok(codes(c).includes("E_MANIFEST_INVALID"), JSON.stringify(c.findings));
+  assert.equal(c.entry, undefined);
+  // checkContent still runs on a schema-invalid manifest (it is not gated
+  // on the schema check), so the refused candidate's OWN parts[] is not
+  // bounded by the schema at all: measured here at MAX_PARTS + 1.
+  assert.equal(c.parts.length, MAX_PARTS + 1, "ingest's own candidate is not yet cut -- projectCandidate is what cuts it");
+  // What bin/service.mjs's ingest-report job would actually post for this
+  // refused release IS cut, by lib/service.mjs's independent MAX_PARTS cut
+  // (see test/service.test.mjs): the wire body is never over the bound,
+  // whatever ingest's own candidate carries.
+  assert.equal(projectCandidate(c).parts.length, MAX_PARTS, "the posted body is cut at the bound rather than sent one past it");
 });
 
 // ── engine codes (merged §2.1) ──────────────────────────────────────────

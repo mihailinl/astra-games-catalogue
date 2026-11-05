@@ -13,7 +13,8 @@ import { test } from "node:test";
 import { ingestReport, ingestWork, MAX_RUN_LEASES, signReport, signWork } from "../bin/service.mjs";
 import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
-  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, oidcToken, projectCandidate, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
+  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, MAX_ACCEPTED, MAX_PARTS, MAX_PROBLEMS, MAX_RESULT_ACTS, MAX_WORK_ACTS,
+  oidcToken, projectCandidate, readWork, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { tmpdir } from "./helpers.mjs";
 
@@ -168,6 +169,20 @@ test("the projection: at most 64 findings, refusals first, each message at most 
   assert.equal(clipBytes("ё".repeat(2000)).length < 2000, true, "clipped between code points");
 });
 
+test("the projection: a candidate's parts[] is cut at MAX_PARTS (contract 6.13.0 §4.6), even for a refused candidate", () => {
+  assert.equal(MAX_PARTS, 1024);
+  const partsOf = (n) => Array.from({ length: n }, (_, i) => ({ path: `art/p${i}.png`, kind: "art", sha256: H("a"), title: "p" }));
+  const atBound = projectCandidate({ schema: "astra.games.candidate/1", request: { lease_id: "L", repo_id: 1, tag: "v1" }, verdict: "accept", findings: [], parts: partsOf(MAX_PARTS) });
+  assert.equal(atBound.parts.length, MAX_PARTS);
+  // One past the bound is still a candidate ingest built (checkContent runs
+  // on a schema-invalid manifest too; verified against lib/ingest.mjs
+  // directly, not just here), so the cut is on projectCandidate's OWN
+  // output, whatever verdict the candidate carries.
+  const overBound = projectCandidate({ schema: "astra.games.candidate/1", request: { lease_id: "L", repo_id: 1, tag: "v1" }, verdict: "refuse", findings: [{ code: "E_MANIFEST_INVALID", message: "manifest.schema.json: /integration/content: more than maxItems 1024" }], parts: partsOf(MAX_PARTS + 1) });
+  assert.equal(overBound.parts.length, MAX_PARTS, "cut at the bound rather than sent one past it");
+  assert.deepEqual(overBound.parts.map((p) => p.path), partsOf(MAX_PARTS).map((p) => p.path), "the kept ones are the first MAX_PARTS, unchanged");
+});
+
 test("the client: an https base from GAMES_SERVICE_URL (production by default), a Bearer OIDC token for the pinned audience, and the doors' paths", async () => {
   assert.equal(serviceBase({}), DEFAULT_BASE);
   assert.equal(serviceBase({ GAMES_SERVICE_URL: "https://staging.example/plugins/v1/" }), "https://staging.example/plugins/v1");
@@ -216,6 +231,17 @@ test("the client mints a FRESH OIDC token for every call, never one cached acros
   assert.deepEqual(seenAuth, ["Bearer oidc-jwt-1", "Bearer oidc-jwt-2", "Bearer oidc-jwt-3"]);
   assert.equal(await c.signedWake(), 202, "the wake carries no credential and mints no token either");
   assert.equal(tokenCalls, 3, "signedWake never touches the token endpoint");
+});
+
+test("readWork: at most MAX_WORK_ACTS acts, the oldest kept; the rest wait for the next run (contract 6.13.0 §4.6)", () => {
+  assert.equal(MAX_WORK_ACTS, 100);
+  const actOf = (i) => ({ type: "M_YANK", confirmation: { ref: `act-${i}` } });
+  const atBound = readWork({ schema: "astra.games.work/1", acts: Array.from({ length: MAX_WORK_ACTS }, (_, i) => actOf(i)), health: null });
+  assert.equal(atBound.acts.length, MAX_WORK_ACTS);
+  const over = Array.from({ length: MAX_WORK_ACTS + 1 }, (_, i) => actOf(i));
+  const overBound = readWork({ schema: "astra.games.work/1", acts: over, health: null });
+  assert.equal(overBound.acts.length, MAX_WORK_ACTS, "cut, not refused: a service sending more must not fail this job");
+  assert.deepEqual(overBound.acts, over.slice(0, MAX_WORK_ACTS), "the oldest (first) MAX_WORK_ACTS are kept, as the service sends them");
 });
 
 // ── sign.yml's work and report jobs ──────────────────────────────────────
@@ -291,6 +317,33 @@ test("sign-report: posts the result, wakes the service, and fails only after bot
   const noWake = fakeService({ signResults: {}, signedWake: new Error("ECONNREFUSED") });
   assert.deepEqual((await signReport({ reportFile: write(REPORT), env, client: noWake, log: quiet })).failed, [], "a failed wake is not a failed signing");
   await assert.rejects(signReport({ reportFile: write(REPORT), env: { ...env, DATA_SHA: "" }, client: ok, log: quiet }), /DATA_SHA/);
+});
+
+test("sign result: at most MAX_RESULT_ACTS acts[], each refused act's problems[] cut at MAX_PROBLEMS (contract 6.13.0 §4.6)", () => {
+  assert.equal(MAX_RESULT_ACTS, 100);
+  assert.equal(MAX_PROBLEMS, 16);
+  const manyProblems = Array.from({ length: MAX_PROBLEMS + 1 }, (_, i) => `problem ${i}`);
+  const atBoundProblems = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, acts: [], duplicateActs: [], refusedActs: [{ ref: "act-1", type: "M_PROMOTE", problems: manyProblems.slice(0, MAX_PROBLEMS) }] } });
+  assert.equal(atBoundProblems.acts[0].problems.length, MAX_PROBLEMS);
+  const overBoundProblems = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, acts: [], duplicateActs: [], refusedActs: [{ ref: "act-1", type: "M_PROMOTE", problems: manyProblems }] } });
+  assert.equal(overBoundProblems.acts[0].problems.length, MAX_PROBLEMS, "cut, not refused");
+  assert.deepEqual(overBoundProblems.acts[0].problems, manyProblems.slice(0, MAX_PROBLEMS));
+
+  const actOf = (i) => ({ confirmation: { kind: "console-2fa", ref: `act-${i}` }, type: "M_YANK", seq: i });
+  const atBoundActs = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, acts: Array.from({ length: MAX_RESULT_ACTS }, (_, i) => actOf(i)), duplicateActs: [], refusedActs: [] } });
+  assert.equal(atBoundActs.acts.length, MAX_RESULT_ACTS);
+  const overBoundActs = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, acts: Array.from({ length: MAX_RESULT_ACTS + 1 }, (_, i) => actOf(i)), duplicateActs: [], refusedActs: [] } });
+  assert.equal(overBoundActs.acts.length, MAX_RESULT_ACTS, "cut, not refused: readWork already bounds what is ever settled, this is the independent cut on the body sent");
+});
+
+test("sign result: accepted[] is cut at MAX_ACCEPTED, the 5 leases of a lease answer plus the 250 a register can create (contract 6.13.0 §4.6)", () => {
+  assert.equal(MAX_ACCEPTED, 255);
+  const acceptedOf = (n) => Array.from({ length: n }, (_, i) => ({ request: { lease_id: `L${i}`, repo_id: i, tag: "v1" }, result: "listed", reason: "listed" }));
+  const atBound = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, accepted: acceptedOf(MAX_ACCEPTED) } });
+  assert.equal(atBound.accepted.length, MAX_ACCEPTED);
+  const overBound = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, accepted: acceptedOf(MAX_ACCEPTED + 1) } });
+  assert.equal(overBound.accepted.length, MAX_ACCEPTED, "cut, not refused");
+  assert.deepEqual(overBound.accepted.map((a) => a.request.lease_id), acceptedOf(MAX_ACCEPTED).map((a) => a.request.lease_id));
 });
 
 test("sign-result: an accepted item that names no lease is left out, so one unreadable candidate cannot void the whole result (BOT-96)", () => {
