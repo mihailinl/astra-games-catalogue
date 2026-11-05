@@ -134,6 +134,23 @@ test("a community prerelease is refused (stable releases only)", async () => {
   assert.ok(codes(c).includes("E_PRERELEASE"));
 });
 
+test("a release carrying only astra-gi-<suffix>.zip is E_ASSET_MISSING, and the message says one GI per release", async () => {
+  const zip = stagingZip();
+  const release = structuredClone(fixture("release.json"));
+  release.assets = release.assets.map((a) => ({ ...a, name: a.name === "astra-gi.zip" ? "astra-gi-ds1.zip" : a.name }));
+  release.assets.push({ ...release.assets[0], name: "astra-gi-ds2.zip" });
+  const c = await run({ zip, github: fakeGithub({ zip, release }) });
+  const f = c.findings.find((x) => x.code === "E_ASSET_MISSING");
+  assert.ok(f, JSON.stringify(c.findings));
+  assert.match(f.message, /astra-gi-ds1\.zip, astra-gi-ds2\.zip/);
+  assert.match(f.message, /one game integration per release/);
+  const plain = structuredClone(fixture("release.json"));
+  plain.assets = plain.assets.filter((a) => a.name !== "astra-gi.zip");
+  const d = await run({ zip, github: fakeGithub({ zip, release: plain }) });
+  const g = d.findings.find((x) => x.code === "E_ASSET_MISSING");
+  assert.ok(g && !/one game integration per release/.test(g.message), JSON.stringify(d.findings));
+});
+
 test("an asset whose bytes are not GitHub's digest is refused", async () => {
   const zip = stagingZip();
   const release = structuredClone(fixture("release.json"));
