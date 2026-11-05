@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 74224cf8951891c3591f4788fcf6430c00c372db, path testdata/games/content/releases/jar-in-jar/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at 208aeb2404cf7c21668d39ae405b5469ecdc579e, path testdata/games/content/releases/jar-in-jar/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: a jar inside a jar (META-INF/jars/inner.jar, a prohibited VRM inside it) --
