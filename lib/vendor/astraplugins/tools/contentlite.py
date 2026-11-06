@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at c7ae74ab89c200f52318a08dcf4095cd436b181f, path tools/contentlite.py.
+# VENDORED from mihailinl/AstraPlugins at 895d7e59354bdb17bfbddb9cc83cc82038cd340a, path tools/contentlite.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -316,6 +316,23 @@ def strict_loads(text: str | bytes) -> Any:
     return json.loads(text, object_pairs_hook=_no_dupes)
 
 
+def _escape_hidden_controls(text: str) -> str:
+    """Every C0 control (other than the JSON structural `\\n`), DEL (U+007F)
+    and C1 control (U+0080-U+009F) as a `\\uXXXX` escape, never a raw byte: a
+    raw one trips the minice repository's own "no hidden control character in
+    any tracked text file" gate, and refuses the whole file on every
+    repository that vendors this one. The parsed value is unchanged -- only
+    the on-disk spelling moves (`tools/check-no-hidden-controls.py`)."""
+    out = []
+    for c in text:
+        cp = ord(c)
+        if cp != 0x0A and (cp <= 0x1F or cp == 0x7F or 0x80 <= cp <= 0x9F):
+            out.append(f"\\u{cp:04x}")
+        else:
+            out.append(c)
+    return "".join(out)
+
+
 def pretty(doc: Any) -> str:
     """The committed spelling of every generated JSON golden."""
-    return json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    return _escape_hidden_controls(json.dumps(doc, ensure_ascii=False, indent=2)) + "\n"
