@@ -22,6 +22,7 @@
     { "repository_id": 1408152993, "tag": "v0.8.1", "asset": "astra-gi.zip", "sha256": "1ea3ef142e718afeffc9bbbc9dfab12e04a14d657d97524d9e7ba2225789a687" },
     { "repository_id": 1408152993, "tag": "il2cpp-v0.8.1", "asset": "astra-gi.zip", "sha256": "42c8e2b1bddcd5e62d9f87eaccc78c6beed9d7306028ea4706a50c2a08a7d20e" },
     { "repository_id": 1412685270, "tag": "v0.3.1", "asset": "astra-gi.zip", "sha256": "00741b76d7b0bc5ed887bffd93351924d48de08449073daaf9fb2c2593fa5e4d" },
+    { "repository_id": 1412685270, "tag": "gta3-v0.3.1", "asset": "astra-gi.zip", "sha256": "97adf22a09770f55e98d5004b4d820ba628cb1b8b953e172f3a0f14780fa981d" },
     { "repository_id": 1405082830, "tag": "ds1-v0.1.1", "asset": "astra-gi.zip", "sha256": "7b88de52cecaec665fa9683eaa1b1e332497668b51b7760e4dea49dbec9ef71c" },
     { "repository_id": 1405082830, "tag": "ds2-v0.1.1", "asset": "astra-gi.zip", "sha256": "9b2728ff1a06cdef01465003d38486cd23e99f87b32a304489653aa6c0d26479" }
   ]
