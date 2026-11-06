@@ -760,3 +760,54 @@ test("#129 f076038: a UTF-16 localisation .json or .toml is accepted though cont
   const r = runGolden({ "astra-gi.toml": "x", "models/prop.gltf": utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
   assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], "a .gltf must be UTF-8");
 });
+
+// ── canary: no vendored content code is silently downgraded ────────────────
+//
+// lib/content.mjs's bundle_refusals/archive_refusals loops read `CODES[r.code]
+// ?? CODES.E_CONTENT_FORMAT` -- a real, honest fallback for a code this
+// catalogue genuinely cannot name, but a silent trap for one it simply forgot
+// to declare: the finding still refuses, with the WRONG code, invisible to
+// anything that reads findings by code (gi-probe pairing, moderator tooling,
+// a future contract check naming this exact reason). AstraPlugins #146 added
+// two such codes (E_CONTENT_AVATAR_IN_PACK, F_CONTENT_LICENCE_DECLARED) that
+// this repository had to catch by hand; the next AstraPlugins change would
+// repeat the same bug unnoticed without a canary that scans for it.
+//
+// Every E_/F_/W_/H_ _CONTENT_ code string literal in the vendored sources
+// this catalogue actually runs (contentlite.py, check-content-goldens.py,
+// and schemalite.py, which lib/schemacheck.py imports) must be either
+// declared in lib/codes.mjs, or named here with the REAL reason it cannot
+// reach this catalogue's candidate -- never "no golden happens to try it".
+
+// Each reason names the actual code path that makes the code unreachable
+// through schemacheck.py's own ctx shape, not merely untested:
+const NOT_REACHABLE_IN_GAMES = new Map([
+  // ingest-v1.md §3 step 9: `ctx.get("blocklist", [])` is always `[]` here --
+  // schemacheck.py's bundle_verdict/_ingest_walked never sets a "blocklist"
+  // key, so the sha256-membership test can never be true in this catalogue.
+  ["E_CONTENT_BLOCKED", "schemacheck.py's ctx never carries a blocklist; the membership test is always false here"],
+  // ingest-v1.md §3 step 12: `"declared_parts" in ctx` is always False here --
+  // schemacheck.py's ctx is only `{"declared_licence": ...}`, never
+  // "declared_parts" (that cross-check is gi-probe's/the server's job, not
+  // this catalogue's static content check over a release zip).
+  ["E_CONTENT_PARTS_MISMATCH", "schemacheck.py's ctx never carries declared_parts; this cross-check never runs here"],
+]);
+
+test("canary: every content code the vendored checker can emit is declared in lib/codes.mjs or explicitly excused", () => {
+  const sources = ["tools/contentlite.py", "tools/check-content-goldens.py", "tools/schemalite.py"]
+    .map((f) => fs.readFileSync(path.join(VENDOR, "astraplugins", f), "utf8"));
+  const pattern = /["']([EFWH]_CONTENT_[A-Z0-9_]+)["']/g;
+  const found = new Set();
+  for (const text of sources) for (const m of text.matchAll(pattern)) found.add(m[1]);
+  assert.ok(found.size > 5, `the scan found suspiciously few codes (${found.size}) -- check the file paths or the pattern`);
+
+  const declared = new Set(Object.values(CODES));
+  const unexplained = [...found].filter((c) => !declared.has(c) && !NOT_REACHABLE_IN_GAMES.has(c));
+  assert.deepEqual(unexplained, [],
+    `lib/codes.mjs does not declare these, and NOT_REACHABLE_IN_GAMES does not excuse them either: ${unexplained.join(", ")}`);
+
+  for (const c of NOT_REACHABLE_IN_GAMES.keys()) {
+    assert.ok(!declared.has(c), `${c} is declared in lib/codes.mjs -- drop it from NOT_REACHABLE_IN_GAMES, it is not an excuse any more`);
+    assert.ok(found.has(c), `${c} is in NOT_REACHABLE_IN_GAMES but the scan no longer finds it emitted anywhere -- drop the stale entry`);
+  }
+});
