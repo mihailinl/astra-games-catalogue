@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 895d7e59354bdb17bfbddb9cc83cc82038cd340a, path testdata/games/content/releases/bundle-audio-licence-undeclared/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at 53ab73936f70cc8278aeb5b6ee1c122fdd865b47, path testdata/games/content/releases/bundle-audio-licence-undeclared/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: the content catalogue's audio-licence-undeclared.astrachar, byte for byte,
