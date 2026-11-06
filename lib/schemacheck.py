@@ -16,7 +16,7 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
         -> {"ok": true, "undeclared": [...], "missing": [...], "duplicates": [...],
             "parts": [{"path","sha256","licence_source","vrm_licence"?}],
             "licence_refusals": [...], "licence_conflicts": [...], "licence_unknown": [...],
-            "licence_undeclared": [...], "format_refusals": [{"path","detail"}, ...],
+            "licence_declared": [...], "licence_undeclared": [...], "format_refusals": [{"path","detail"}, ...],
             "bundle_refusals": [{"path","code","detail"}, ...]}
          | {"ok": false, "error": "..."}
     python3 lib/schemacheck.py zipcheck ZIP
@@ -869,11 +869,18 @@ def _ingest_walked(raw: bytes, files, ctx):
 
 
 def bundle_verdict(path: str, raw: bytes, licence, budget=None) -> dict:
-    """{"status": "ok"|"unknown"|"bundle", "refusal": {"code","detail"}|None,
-    "body": (path, bytes)|None}. Unzipped ONCE by content's walk_zip; its glTF
-    JSON (from the walk's headers) is charged to the release's 32 MiB before
-    anything in it is parsed (AstraPlugins #129 cabb305: four 32 MiB bundles
-    once made the gate parse 128 MiB of JSON, and were accepted)."""
+    """{"status": "ok"|"unknown"|"bundle", "flags": [...], "refusal":
+    {"code","detail"}|None, "body": (path, bytes)|None}. `status` is
+    "unknown" when the bundle's own F_CONTENT_VRM_META_UNKNOWN is among
+    `flags` (kept for callers that only care about that one); `flags` itself
+    carries every one of content's held flags ingest_bundle returned --
+    AstraPlugins #146 (53ab739): F_CONTENT_VRM_META_UNKNOWN and
+    F_CONTENT_LICENCE_DECLARED can BOTH be present at once, for the SAME
+    bundle, and neither may be dropped (manifest.md §2.7.3). Unzipped ONCE by
+    content's walk_zip; its glTF JSON (from the walk's headers) is charged to
+    the release's 32 MiB before anything in it is parsed (AstraPlugins #129
+    cabb305: four 32 MiB bundles once made the gate parse 128 MiB of JSON,
+    and were accepted)."""
     budget = budget if budget is not None else ReleaseBudget()
     try:
         files = CG.walk_zip(raw)
@@ -889,15 +896,22 @@ def bundle_verdict(path: str, raw: bytes, licence, budget=None) -> dict:
                 f"over {CG.MAX_GLTF_JSON_TOTAL} (32 MiB)"}}
     budget.gltf_json += own
     roots, body_path, body = _bundle_layout(files)
+    # AstraPlugins #146: ingest_bundle's own `declared_licence` ctx key is now
+    # {root: licence string}, not a bare set of roots -- one declared licence
+    # on the astra-gi.toml entry stands for every pack root in the bundle.
     try:
-        got = _ingest_walked(raw, files, {"declared_licence": roots if licence else []})
+        got = _ingest_walked(raw, files, {"declared_licence": {root: licence for root in roots} if licence else {}})
     except CG.Refusal as r:
         return {"status": "bundle", "refusal": {"code": r.code, "detail": f"{path}!{r.detail}"}, "body": None}
     except Exception as e:  # noqa: BLE001 -- content's reader raised on a hostile shape: refuse, never crash
         return {"status": "bundle", "body": None, "refusal": {
             "code": "E_CONTENT_FORMAT", "detail": f"{path}!: the content checker cannot read it ({type(e).__name__}: {e})"}}
-    status = "unknown" if "F_CONTENT_VRM_META_UNKNOWN" in got["flags"] else "ok"
-    return {"status": status, "refusal": None, "body": (body_path, body) if body is not None else None}
+    # ingest_bundle's `flags` only ever holds these two (F_CONTENT_VRM_META_UNKNOWN,
+    # F_CONTENT_LICENCE_DECLARED); passed through whole so BOTH reach the candidate
+    # when both apply (manifest.md §2.7.3, golden bundle-two-flags).
+    flags = list(got["flags"])
+    status = "unknown" if "F_CONTENT_VRM_META_UNKNOWN" in flags else "ok"
+    return {"status": status, "flags": flags, "refusal": None, "body": (body_path, body) if body is not None else None}
 
 
 # ── Zip Cloaking ─────────────────────────────────────────────────────────
@@ -1411,7 +1425,7 @@ def content_report(zip_path, declared):
             raw = parts_by_path[path]["raw"]
             if path.lower().endswith(BUNDLE_EXTS) and _is_zip(raw[:4]):
                 bv = bundle_verdict(path, raw, entry.get("licence"), budget)
-                gate = {"status": bv["status"], "vrm_licence": None, "refusal": bv["refusal"]}
+                gate = {"status": bv["status"], "vrm_licence": None, "refusal": bv["refusal"], "flags": bv.get("flags", [])}
                 if bv["status"] == "ok" and bv["body"] is not None:
                     body_gate = vrm_gate(bv["body"][1], bv["body"][0])
                     if body_gate["status"] == "ok":
@@ -1447,6 +1461,7 @@ def content_report(zip_path, declared):
     licence_refusals = []
     licence_conflicts = []
     licence_unknown = []
+    licence_declared = []
     licence_undeclared = []
     bundle_refusals = []
     for path in sorted(declared_set & content_set):
@@ -1471,6 +1486,11 @@ def content_report(zip_path, declared):
             licence_refusals.append({"path": path, "field": gate["refusal"]["field"], "value": gate["refusal"]["value"]})
         if gate_status == "unknown":
             licence_unknown.append(path)
+        # AstraPlugins #146: ingest_bundle's F_CONTENT_LICENCE_DECLARED is independent of
+        # "unknown" above -- a bundle can carry BOTH flags for the same path at once
+        # (manifest.md §2.7.3, golden bundle-two-flags), so this is never an elif.
+        if gate and "F_CONTENT_LICENCE_DECLARED" in gate.get("flags", []):
+            licence_declared.append(path)
         declared_licence = declared_by_path.get(path, {}).get("licence")
         if vrm_licence is not None:
             licence_source = "vrm"
@@ -1493,6 +1513,7 @@ def content_report(zip_path, declared):
         "licence_refusals": licence_refusals,
         "licence_conflicts": licence_conflicts,
         "licence_unknown": licence_unknown,
+        "licence_declared": licence_declared,
         "licence_undeclared": licence_undeclared,
         "format_refusals": format_refusals,
         "bundle_refusals": bundle_refusals,

@@ -624,6 +624,45 @@ test("#129 rule 4: a valid bundle's body licence is the part's licence, and an U
     "an Unknown inside passes only with the declared licence");
 });
 
+// AstraPlugins #146 (53ab739, G5/W1): a pack part with NO VRM-judged file at
+// all stands on its declared licence alone, and that declaration ALWAYS
+// holds the version for a moderator -- F_CONTENT_LICENCE_DECLARED, never a
+// silent accept. The mutation that proves it: strip the declared licence
+// and the SAME bundle refuses E_CONTENT_LICENCE_UNDECLARED instead, with no
+// flag at all -- the flag tracks the declaration, not some unrelated signal.
+test("F_CONTENT_LICENCE_DECLARED: a bundle pack part with no VRM meta holds for a moderator on its declared licence, and refuses without one", () => {
+  const wave = releaseGolden("bundle-animset-wave");
+  const r = runGolden(wave.files, wave.manifest);
+  assert.deepEqual(refusalsOf(r), []);
+  assert.deepEqual(flagsOf(r), [CODES.F_CONTENT_LICENCE_DECLARED], JSON.stringify(r.findings));
+
+  const noLicence = releaseGolden("bundle-animset-wave");
+  noLicence.manifest.integration.content[0].licence = "";
+  const r2 = runGolden(noLicence.files, noLicence.manifest);
+  assert.deepEqual(refusalsOf(r2), [CODES.E_CONTENT_LICENCE_UNDECLARED],
+    "with no declared licence the pack part has no rights source at all");
+  assert.deepEqual(flagsOf(r2), [], "no declaration means no F_CONTENT_LICENCE_DECLARED either");
+});
+
+// AstraPlugins #146 review item B1: a decoy avatar (real, ALLOWED VRM meta)
+// hidden inside an animations pack must refuse outright -- the old bug let
+// "allowed -> continue" both lift the pack's hold and override the
+// author's own declared licence. Reuses the content contract's own hostile
+// archive golden (decoy-allowed-vrm-in-animset.astrapack) as a games
+// release's pack content, the same way bundle-animset-wave wraps a plain
+// .astrapack, to prove E_CONTENT_AVATAR_IN_PACK reaches THIS catalogue's
+// candidate (not silently coerced to E_CONTENT_FORMAT).
+test("E_CONTENT_AVATAR_IN_PACK: an avatar-classified file inside a pack part is refused outright, whatever its VRM meta", () => {
+  const decoy = fs.readFileSync(path.join(VENDOR, "astraplugins", "testdata/content/archives/hostile/decoy-allowed-vrm-in-animset.astrapack"));
+  const manifest = { integration: { content: [{ path: "packs/decoy.astrapack", kind: "animations", title: "t", credit: "c", licence: "CC0-1.0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "packs/decoy.astrapack": decoy });
+  const r = checkContent({ zipPath, manifest });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_AVATAR_IN_PACK], JSON.stringify(r.findings));
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_AVATAR_IN_PACK);
+  assert.ok(f.message.includes("packs/decoy.astrapack!"), JSON.stringify(f));
+  assert.deepEqual(r.content, [], "a refused pack is never listed");
+});
+
 // ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
 
 /** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */
@@ -720,4 +759,55 @@ test("#129 f076038: a UTF-16 localisation .json or .toml is accepted though cont
   }
   const r = runGolden({ "astra-gi.toml": "x", "models/prop.gltf": utf16('{"asset": {"version": "2.0"}}') }, { integration: { content: [] } });
   assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], "a .gltf must be UTF-8");
+});
+
+// ── canary: no vendored content code is silently downgraded ────────────────
+//
+// lib/content.mjs's bundle_refusals/archive_refusals loops read `CODES[r.code]
+// ?? CODES.E_CONTENT_FORMAT` -- a real, honest fallback for a code this
+// catalogue genuinely cannot name, but a silent trap for one it simply forgot
+// to declare: the finding still refuses, with the WRONG code, invisible to
+// anything that reads findings by code (gi-probe pairing, moderator tooling,
+// a future contract check naming this exact reason). AstraPlugins #146 added
+// two such codes (E_CONTENT_AVATAR_IN_PACK, F_CONTENT_LICENCE_DECLARED) that
+// this repository had to catch by hand; the next AstraPlugins change would
+// repeat the same bug unnoticed without a canary that scans for it.
+//
+// Every E_/F_/W_/H_ _CONTENT_ code string literal in the vendored sources
+// this catalogue actually runs (contentlite.py, check-content-goldens.py,
+// and schemalite.py, which lib/schemacheck.py imports) must be either
+// declared in lib/codes.mjs, or named here with the REAL reason it cannot
+// reach this catalogue's candidate -- never "no golden happens to try it".
+
+// Each reason names the actual code path that makes the code unreachable
+// through schemacheck.py's own ctx shape, not merely untested:
+const NOT_REACHABLE_IN_GAMES = new Map([
+  // ingest-v1.md §3 step 9: `ctx.get("blocklist", [])` is always `[]` here --
+  // schemacheck.py's bundle_verdict/_ingest_walked never sets a "blocklist"
+  // key, so the sha256-membership test can never be true in this catalogue.
+  ["E_CONTENT_BLOCKED", "schemacheck.py's ctx never carries a blocklist; the membership test is always false here"],
+  // ingest-v1.md §3 step 12: `"declared_parts" in ctx` is always False here --
+  // schemacheck.py's ctx is only `{"declared_licence": ...}`, never
+  // "declared_parts" (that cross-check is gi-probe's/the server's job, not
+  // this catalogue's static content check over a release zip).
+  ["E_CONTENT_PARTS_MISMATCH", "schemacheck.py's ctx never carries declared_parts; this cross-check never runs here"],
+]);
+
+test("canary: every content code the vendored checker can emit is declared in lib/codes.mjs or explicitly excused", () => {
+  const sources = ["tools/contentlite.py", "tools/check-content-goldens.py", "tools/schemalite.py"]
+    .map((f) => fs.readFileSync(path.join(VENDOR, "astraplugins", f), "utf8"));
+  const pattern = /["']([EFWH]_CONTENT_[A-Z0-9_]+)["']/g;
+  const found = new Set();
+  for (const text of sources) for (const m of text.matchAll(pattern)) found.add(m[1]);
+  assert.ok(found.size > 5, `the scan found suspiciously few codes (${found.size}) -- check the file paths or the pattern`);
+
+  const declared = new Set(Object.values(CODES));
+  const unexplained = [...found].filter((c) => !declared.has(c) && !NOT_REACHABLE_IN_GAMES.has(c));
+  assert.deepEqual(unexplained, [],
+    `lib/codes.mjs does not declare these, and NOT_REACHABLE_IN_GAMES does not excuse them either: ${unexplained.join(", ")}`);
+
+  for (const c of NOT_REACHABLE_IN_GAMES.keys()) {
+    assert.ok(!declared.has(c), `${c} is declared in lib/codes.mjs -- drop it from NOT_REACHABLE_IN_GAMES, it is not an excuse any more`);
+    assert.ok(found.has(c), `${c} is in NOT_REACHABLE_IN_GAMES but the scan no longer finds it emitted anywhere -- drop the stale entry`);
+  }
 });
