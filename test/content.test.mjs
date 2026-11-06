@@ -624,6 +624,45 @@ test("#129 rule 4: a valid bundle's body licence is the part's licence, and an U
     "an Unknown inside passes only with the declared licence");
 });
 
+// AstraPlugins #146 (53ab739, G5/W1): a pack part with NO VRM-judged file at
+// all stands on its declared licence alone, and that declaration ALWAYS
+// holds the version for a moderator -- F_CONTENT_LICENCE_DECLARED, never a
+// silent accept. The mutation that proves it: strip the declared licence
+// and the SAME bundle refuses E_CONTENT_LICENCE_UNDECLARED instead, with no
+// flag at all -- the flag tracks the declaration, not some unrelated signal.
+test("F_CONTENT_LICENCE_DECLARED: a bundle pack part with no VRM meta holds for a moderator on its declared licence, and refuses without one", () => {
+  const wave = releaseGolden("bundle-animset-wave");
+  const r = runGolden(wave.files, wave.manifest);
+  assert.deepEqual(refusalsOf(r), []);
+  assert.deepEqual(flagsOf(r), [CODES.F_CONTENT_LICENCE_DECLARED], JSON.stringify(r.findings));
+
+  const noLicence = releaseGolden("bundle-animset-wave");
+  noLicence.manifest.integration.content[0].licence = "";
+  const r2 = runGolden(noLicence.files, noLicence.manifest);
+  assert.deepEqual(refusalsOf(r2), [CODES.E_CONTENT_LICENCE_UNDECLARED],
+    "with no declared licence the pack part has no rights source at all");
+  assert.deepEqual(flagsOf(r2), [], "no declaration means no F_CONTENT_LICENCE_DECLARED either");
+});
+
+// AstraPlugins #146 review item B1: a decoy avatar (real, ALLOWED VRM meta)
+// hidden inside an animations pack must refuse outright -- the old bug let
+// "allowed -> continue" both lift the pack's hold and override the
+// author's own declared licence. Reuses the content contract's own hostile
+// archive golden (decoy-allowed-vrm-in-animset.astrapack) as a games
+// release's pack content, the same way bundle-animset-wave wraps a plain
+// .astrapack, to prove E_CONTENT_AVATAR_IN_PACK reaches THIS catalogue's
+// candidate (not silently coerced to E_CONTENT_FORMAT).
+test("E_CONTENT_AVATAR_IN_PACK: an avatar-classified file inside a pack part is refused outright, whatever its VRM meta", () => {
+  const decoy = fs.readFileSync(path.join(VENDOR, "astraplugins", "testdata/content/archives/hostile/decoy-allowed-vrm-in-animset.astrapack"));
+  const manifest = { integration: { content: [{ path: "packs/decoy.astrapack", kind: "animations", title: "t", credit: "c", licence: "CC0-1.0" }] } };
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", "packs/decoy.astrapack": decoy });
+  const r = checkContent({ zipPath, manifest });
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_AVATAR_IN_PACK], JSON.stringify(r.findings));
+  const f = r.findings.find((x) => x.code === CODES.E_CONTENT_AVATAR_IN_PACK);
+  assert.ok(f.message.includes("packs/decoy.astrapack!"), JSON.stringify(f));
+  assert.deepEqual(r.content, [], "a refused pack is never listed");
+});
+
 // ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
 
 /** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */
