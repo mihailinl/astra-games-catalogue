@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 53ab73936f70cc8278aeb5b6ee1c122fdd865b47, path testdata/games/content/releases/bundle-gltf-total-over-32mib/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path testdata/games/content/releases/bundle-gltf-total-over-32mib/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: three .astrapack parts (built in memory, gen.py synth with the content
