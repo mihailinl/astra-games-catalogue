@@ -50,6 +50,9 @@ export function makeTrust({ rootKey, kindKeys, indexKeys = [], expiresAt = "2027
 
 export const rootsOf = (rootKey) => ({ status: "test", keys: [{ key_id: "test-root", publicKey: publicKeyFromBase64(rootKey.publicB64) }] });
 
+// A ceremony's fresh `next` starts after the promoted key, as NOT_BEFORE_NEXT starts after NOT_BEFORE.
+export const NOT_BEFORE_FRESH = "2026-10-01T00:02:00Z";
+
 export function makeCatalogue({ withNext = false } = {}) {
   const root = tmpdir("agc-root-");
   for (const f of ["first-party.json", "loaders.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(root, f));
@@ -59,26 +62,38 @@ export function makeCatalogue({ withNext = false } = {}) {
   const commandsCurrent = throwawayKey();
   const commandsNext = throwawayKey();
   const indexKey = throwawayKey();
-  const trust = makeTrust({
+  // the same trust.json with other games rows: what a root ceremony publishes
+  const trustWith = (games, { serial = 5 } = {}) => makeTrust({
     rootKey,
     kindKeys: [
-      kindKeyRow("games", "current", "astra-games-2026a", current),
-      kindKeyRow("games", "next", "astra-games-2026b", next),
+      ...games,
       kindKeyRow("commands", "current", "astra-commands-2026a", commandsCurrent),
       kindKeyRow("commands", "next", "astra-commands-2026b", commandsNext),
     ],
     indexKeys: [{ key_id: "astra-index-2026a", public_key: indexKey.publicB64, not_before: "2026-08-19T11:00:49Z", not_after: "2027-10-18T00:00:00Z" }],
+    mutate: (s) => { s.serial = serial; },
   });
+  const trust = trustWith([kindKeyRow("games", "current", "astra-games-2026a", current), kindKeyRow("games", "next", "astra-games-2026b", next)]);
   const trustFile = path.join(root, "trust.json");
   fs.writeFileSync(trustFile, JSON.stringify(trust));
   const roots = rootsOf(rootKey);
+  // trust.json N+1 of a ceremony that promotes next (B) to current and adds `fresh` (C) as next
+  const promotedTrust = (fresh) => trustWith([
+    kindKeyRow("games", "current", "astra-games-2026b", next, NOT_BEFORE_NEXT),
+    kindKeyRow("games", "next", "astra-games-2026c", fresh, NOT_BEFORE_FRESH),
+  ], { serial: 6 });
+  // publish another trust.json to this catalogue's signer; returns its games kind keys
+  const useTrust = (doc) => {
+    fs.writeFileSync(trustFile, JSON.stringify(doc));
+    return loadTrust({ file: trustFile, now: T0, roots }).kindKeys;
+  };
   const { kindKeys } = loadTrust({ file: trustFile, now: T0, roots });
   const data = tmpdir("agc-data-");
   const env = { GAMES_SIGNING_KEY_CURRENT: current.seedB64, ...(withNext ? { GAMES_SIGNING_KEY_NEXT: next.seedB64 } : {}) };
   const sign = (opts = {}) => runSign({ dataDir: data, root, env, now: T0, trustFile, roots, ...opts });
   const dist = (f) => JSON.parse(fs.readFileSync(path.join(data, "dist", f), "utf8"));
   const state = (f) => JSON.parse(fs.readFileSync(path.join(data, f), "utf8"));
-  return { root, data, env, kindKeys, trustFile, roots, rootKey, current, next, commandsCurrent, commandsNext, indexKey, sign, dist, state };
+  return { root, data, env, kindKeys, trustFile, roots, rootKey, current, next, commandsCurrent, commandsNext, indexKey, sign, dist, state, trustWith, promotedTrust, useTrust };
 }
 
 const hex = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");

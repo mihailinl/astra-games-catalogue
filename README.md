@@ -109,16 +109,32 @@ advance:
   an older one. There is no per-key lifetime.
 - **Routine rotation needs no ceremony and no client release**: put the next
   key in `GAMES_SIGNING_KEY_NEXT`, and the signer switches to it; clients
-  already accept it. The key rotated away from is spent, and the signer never
-  goes back to it. Spent is per document schema, not per kind (minice design
-  §11a.9; AstraPlugins `games-index-v1.md` §3): the index and the withdrawn
-  list are signed and served on separate schedules, and a client retires
-  `current` for one of them only when a `next`-signed document of that same
-  schema arrives, so a withdrawn list is never refused because the index
-  rotated first. `floors.json` on `data` records the spent key ids per schema.
+  already accept it. Which key is which comes from `trust.json`, never from
+  the secret's name: each seed's public key is looked up there. With the old
+  key's seed still beside it, the signer signs with `next` first and the old
+  `current` beside it, and the document says `games-current`. That is the
+  ceremony bridge below, on whenever both seeds are set. The key rotated away
+  from is spent: it only ever co-signs, and it never signs alone. Spent is per
+  document schema, not per kind (minice design §11a.9; AstraPlugins
+  `games-index-v1.md` §3): the index and the withdrawn list are signed and
+  served on separate schedules, and a client retires `current` for one of them
+  only when a document of that same schema moves the rotation, so a withdrawn
+  list is never refused because the index rotated first. `floors.json` on
+  `data` records the spent keys per schema, each by id and public key.
 - **A root ceremony** (the owner's one passphrase) happens only on a
   compromise, when both games keys are spent for a schema, or to add a kind: it re-signs
   `trust.json` without the bad key and with a fresh `next`.
+- **A ceremony that promotes `next` to `current` is bridged.** A document
+  only the promoted key signed is refused under either the old or the new
+  `trust.json`, so every served document must carry both keys' signatures
+  first. With both seeds set, the signer already does that, before and after
+  the ceremony; the old key keeps co-signing until the next promotion. Before
+  the new `trust.json` is published, the operator runs
+  `node bin/ceremony-ready.mjs --next-trust <candidate trust.json>`, which
+  fetches the live `trust.json` and both documents from both registry hosts
+  (which must serve the same `trust.json`), refuses a candidate that is not
+  that promotion, and prints the digest of the body the owner is to sign.
+  Publish only on exit 0.
 - Inside the document, `key_id` names the role (`games-current` or
   `games-next`, as AstraPlugins' schema enumerates); the signature's
   `key_id` names the key (`astra-games-2026a`).
@@ -145,6 +161,7 @@ abandoned code moves only by a moderator act that cites its evidence.
 | `lib/`, `bin/` | ingest, signing, acts, promotion; `lib/vendor/` holds the pinned copies |
 | `.github/workflows/` | `ingest.yml` (no secrets), `sign.yml`, `promote.yml`, `resign.yml`, `ci.yml` |
 | `bin/service.mjs`, `lib/service.mjs` | the `work` and `report` jobs' client for the plugins service's games bot doors |
+| `bin/ceremony-ready.mjs`, `lib/ceremony.mjs` | the operator's check before a games `trust.json` that promotes `next` is published |
 | branch `data` | the catalogue's state and the signed documents under `dist/`; written only by `sign.yml` and `resign.yml` |
 
 ## How a release becomes a listing

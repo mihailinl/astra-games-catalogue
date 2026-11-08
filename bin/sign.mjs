@@ -74,6 +74,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (process.env.GITHUB_OUTPUT) {
       fs.appendFileSync(process.env.GITHUB_OUTPUT, `issued_at=${report.issuedAt}\nkey_id=${report.keyId}\nrefused_acts=${report.refusedActs.length}\n`);
     }
+    // signed, but a person should know (signing.mjs droppedCoSigners); an annotation in Actions
+    for (const w of report.warnings ?? []) console.error(`${process.env.GITHUB_ACTIONS === "true" ? "::warning::" : "warning: "}${w}`);
     for (const d of report.duplicateActs) console.log(`act ${d.ref} (${d.type}) was already applied as seq ${d.seq}; not applied again`);
     for (const r of report.refusedActs) console.error(`act refused: ${r.ref ?? "(no ref)"} ${r.type}: ${r.problems.join("; ")}`);
   } catch (e) {
