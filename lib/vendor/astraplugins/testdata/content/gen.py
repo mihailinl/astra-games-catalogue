@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path testdata/content/gen.py.
+# VENDORED from mihailinl/AstraPlugins at 53b832785bcc20953f12d471ad1181092a75d774, path testdata/content/gen.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -674,6 +674,9 @@ COMMANDS = {
     "sub-workflow": command(UUID + "23", "Sub workflow", workflow=graph(
         node("t", "trigger", {"trigger_type": "text", "phrases": ["x"]}),
         node("w", "sub_workflow", {"workflow_id": UUID + "10"}))),
+    "retry-count-over-max": command(UUID + "28", "Retry eleven times", workflow=graph(
+        node("t", "trigger", {"trigger_type": "text", "config": {"phrases": ["go"]}}),
+        node("a", "action", {"action_type": "speak", "action": {"type": "speak", "text": "hi"}, "retry_count": 11}))),
     "requires-unlisted": command(UUID + "22", "Ghost plugin", [{"type": "text", "phrases": ["boo"]}],
                                  [{"type": "dynamic", "handler_id": "plugin__ghost-plugin__haunt"}]),
 }
