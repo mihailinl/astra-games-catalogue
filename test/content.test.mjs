@@ -136,6 +136,26 @@ test("E_CONTENT_DUPLICATE: two entries covering one file, fixed by removing one"
   assert.ok(!codesOf(r2).includes(CODES.E_CONTENT_DUPLICATE), JSON.stringify(r2.findings));
 });
 
+// contract 6.14.0 (minice plugins-api/src/games/wire.rs): a part's path is
+// an IDENTITY (matched by path+sha256 in confirmed[], shown to the author),
+// never prose, so it is never rewritten the way a finding's message or a
+// part's title is. schemacheck.py's content_report walks the top-level
+// release zip with Python's zipfile directly and never runs contentlite.py's
+// path_refusal over those entries (only an EMBEDDED .astrachar/.astrapack's
+// own entries get that today) -- so, absent this check, a declared content
+// path carrying a control character would reach parts[] and the wire
+// unrefused. checkContent now refuses it with E_ARCHIVE_NAME_UNSAFE, the
+// SAME code path_refusal already uses for this exact "control-character"
+// reason, and leaves the path itself untouched.
+test("E_ARCHIVE_NAME_UNSAFE: a declared content path carrying a control character is refused and never rewritten (contract 6.14.0's path case)", () => {
+  const unsafePath = "audio/evi\x01l.ogg";
+  const zipPath = zipPathFor({ "astra-gi.toml": "x", [unsafePath]: OGG });
+  const manifest = { integration: { content: [{ path: unsafePath, kind: "audio", title: "t", credit: "c", licence: "CC0" }] } };
+  const r = checkContent({ zipPath, manifest });
+  assert.ok(codesOf(r).includes(CODES.E_ARCHIVE_NAME_UNSAFE), JSON.stringify(r.findings));
+  assert.ok(!r.content.some((p) => p.path === unsafePath), "refused, never carried into content[] -- and never rewritten to a safe path either");
+});
+
 test("a renamed loader is not picked up as content by extension alone (magic bytes must also match)", () => {
   const notAPng = Buffer.from("MZ" + "\x00".repeat(30), "latin1"); // a PE header
   const zipPath = zipPathFor({ "astra-gi.toml": "x", "art/evil.png": notAPng });

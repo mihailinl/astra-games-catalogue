@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { ingestReport, ingestWork, MAX_RUN_LEASES, signReport, signWork } from "../bin/service.mjs";
 import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
-  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, MAX_ACCEPTED, MAX_PARTS, MAX_PROBLEMS, MAX_RESULT_ACTS, MAX_WORK_ACTS,
+  clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, MAX_ACCEPTED, MAX_PARTS, MAX_PROBLEM_BYTES, MAX_PROBLEMS, MAX_RESULT_ACTS, MAX_WORK_ACTS,
   oidcToken, projectCandidate, readWork, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { tmpdir } from "./helpers.mjs";
@@ -167,6 +167,45 @@ test("the projection: at most 64 findings, refusals first, each message at most 
   assert.ok(!("meta" in p) && !JSON.stringify(p).includes(H("e")));
   assert.equal(ingestResultBody("L", { findings: [] }).lease_id, "L");
   assert.equal(clipBytes("ё".repeat(2000)).length < 2000, true, "clipped between code points");
+});
+
+// ── contract 6.14.0 (minice plugins-api/src/games/wire.rs): no C0 in free
+// text except \t \n \r, and a refused act problem is at most MAX_PROBLEM_BYTES ──
+
+test("clipBytes: every disallowed C0 becomes U+FFFD before the byte cut; \\t \\n \\r pass through raw", () => {
+  const out = clipBytes("a\u0001b\u001bc\td\ne\rf", 100);
+  assert.equal(out, "a�b�c\td\ne\rf");
+});
+
+test("clipBytes: a message (not a problem) still cuts at MAX_MESSAGE_BYTES (2048) -- the new 512-byte bound is for problems only", () => {
+  const out = clipBytes("x".repeat(3000));
+  assert.equal(Buffer.byteLength(out, "utf8"), 2048, "2045 'x' plus '...' is exactly 2048 bytes");
+  assert.ok(out.endsWith("..."));
+});
+
+test("sign result: one act problem is cut at MAX_PROBLEM_BYTES (512, contract 6.14.0; was 2048), ending '...', never splitting a code point", () => {
+  assert.equal(MAX_PROBLEM_BYTES, 512);
+  // 'é' is 2 UTF-8 bytes: 300 of them is a 600-byte problem that must not be
+  // cut mid-code-point the way a byte-oriented slice would.
+  const body = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, acts: [], duplicateActs: [], refusedActs: [{ ref: "act-1", type: "M_PROMOTE", problems: ["é".repeat(300)] }] } });
+  const problem = body.acts[0].problems[0];
+  assert.ok(Buffer.byteLength(problem, "utf8") <= MAX_PROBLEM_BYTES, `problem is ${Buffer.byteLength(problem, "utf8")} bytes`);
+  assert.ok(problem.endsWith("..."));
+  assert.equal(Buffer.from(problem, "utf8").toString("utf8"), problem, "round-trips cleanly: no code point was split");
+});
+
+test("projectCandidate / signResultBody: a finding's message and probe_code, and an accepted entry's reason, get the same C0 scrub as clipBytes (every free-text member, not just one)", () => {
+  const p = projectCandidate({
+    schema: "astra.games.candidate/1", request: { lease_id: "L", repo_id: 1, tag: "v1" }, verdict: "refuse",
+    findings: [{ code: "E_PROBE", message: "bad\u0001byte\u001b here\tok\nok\rok", probe_code: "x\u0007y" }],
+    parts: [{ path: "art/a.png", kind: "art", sha256: "h", title: "cute\u0002cat" }],
+  });
+  assert.equal(p.findings[0].message, "bad�byte� here\tok\nok\rok");
+  assert.equal(p.findings[0].probe_code, "x�y");
+  assert.equal(p.parts[0].title, "cute�cat", "a part's title is prose (unlike its path) and is scrubbed the same way");
+
+  const body = signResultBody({ runId: "1", dataSha: "a".repeat(40), report: { ...REPORT, accepted: [{ request: { lease_id: "L1", repo_id: 1, tag: "v1" }, result: "listed", reason: "ok\u0000 then\u0007" }] } });
+  assert.equal(body.accepted[0].reason, "ok� then�");
 });
 
 test("the projection: a candidate's parts[] is cut at MAX_PARTS (contract 6.13.0 §4.6), even for a refused candidate", () => {
