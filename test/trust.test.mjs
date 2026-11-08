@@ -202,18 +202,18 @@ test("a bridged document verifies under trust N and under N+1, in either signatu
     assert.deepEqual(bothUnder(c.kindKeys, i, w), [[], []], `under N, ${order}`);
     assert.deepEqual(bothUnder(kN1, i, w), [[], []], `under N+1, ${order}`);
   }
-  const by = (d, kk) => signatureCheck(d, INDEX_SCHEMA, kk).verifiedBy.map((k) => `${k.key_id}:${k.role}`);
+  const by = (d, kk) => signatureCheck(d, INDEX_SCHEMA, kk, T0).verifiedBy.map((k) => `${k.key_id}:${k.role}`);
   assert.deepEqual(by(index, c.kindKeys), ["astra-games-2026a:current", "astra-games-2026b:next"], "under N both roles verify");
   assert.deepEqual(by(flip(index), c.kindKeys), ["astra-games-2026a:current", "astra-games-2026b:next"], "whatever the order");
   assert.deepEqual(by(index, kN1), ["astra-games-2026b:current"], "under N+1 A is unlisted and ignored; B verifies as current");
 
   // the two B-only documents the bridge exists to avoid
   const bOnlyNext = resignWith({ signed: { ...index.signed, key_id: "games-next" } }, INDEX_SCHEMA, c.next, "astra-games-2026b");
-  assert.deepEqual(signatureCheck(bOnlyNext, INDEX_SCHEMA, c.kindKeys).problems, [], "B-only games-next is today's routine under N");
-  assert.ok(signatureCheck(bOnlyNext, INDEX_SCHEMA, kN1).problems.some((p) => p.includes("names games-next")), "and is refused under N+1");
+  assert.deepEqual(signatureCheck(bOnlyNext, INDEX_SCHEMA, c.kindKeys, T0).problems, [], "B-only games-next is today's routine under N");
+  assert.ok(signatureCheck(bOnlyNext, INDEX_SCHEMA, kN1, T0).problems.some((p) => p.includes("names games-next")), "and is refused under N+1");
   const bOnlyCurrent = resignWith(index, INDEX_SCHEMA, c.next, "astra-games-2026b");
-  assert.deepEqual(signatureCheck(bOnlyCurrent, INDEX_SCHEMA, kN1).problems, []);
-  assert.ok(signatureCheck(bOnlyCurrent, INDEX_SCHEMA, c.kindKeys).problems.some((p) => p.includes("names games-current")), "re-signing with B alone first does not help: N refuses it");
+  assert.deepEqual(signatureCheck(bOnlyCurrent, INDEX_SCHEMA, kN1, T0).problems, []);
+  assert.ok(signatureCheck(bOnlyCurrent, INDEX_SCHEMA, c.kindKeys, T0).problems.some((p) => p.includes("names games-current")), "re-signing with B alone first does not help: N refuses it");
 });
 
 test("under N+1 the signer keeps co-signing with the spent A and the body says games-current", () => {
@@ -228,7 +228,9 @@ test("under N+1 the signer keeps co-signing with the spent A and the body says g
     assert.deepEqual(d.signatures.map((x) => x.key_id), ["astra-games-2026b", "astra-games-2026a"]);
     assert.equal(d.signed.key_id, "games-current", "B holds current under N+1");
   }
-  assert.equal(run.keyId, "astra-games-2026b,astra-games-2026a");
+  assert.equal(run.keyId, "astra-games-2026b", "the sign-result's key_id is the primary's (the service bounds it to 64 bytes)");
+  assert.deepEqual(run.signedBy, { [INDEX_SCHEMA]: ["astra-games-2026b", "astra-games-2026a"], [WITHDRAWN_SCHEMA]: ["astra-games-2026b", "astra-games-2026a"] });
+  assert.deepEqual(run.warnings, [], "A co-signs, so nothing to warn about");
   assert.deepEqual(bothUnder(kN1, index, withdrawn), [[], []], "under N+1");
   assert.deepEqual(bothUnder(c.kindKeys, index, withdrawn), [[], []], "and under N, for the clients that have not taken N+1: A's co-signature is A's");
   assert.deepEqual(c.state("floors.json").spent, { [INDEX_SCHEMA]: [spentA(c)], [WITHDRAWN_SCHEMA]: [spentA(c)] }, "no next signed, so nothing new is spent");
@@ -237,7 +239,7 @@ test("under N+1 the signer keeps co-signing with the spent A and the body says g
 
   // the slots are not roles: A in the NEXT slot and B in CURRENT sign the same document
   const swapped = c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.next.seedB64, GAMES_SIGNING_KEY_NEXT: c.current.seedB64 } });
-  assert.equal(swapped.keyId, "astra-games-2026b,astra-games-2026a");
+  assert.deepEqual(swapped.signedBy[INDEX_SCHEMA], ["astra-games-2026b", "astra-games-2026a"]);
 
   // the next routine rotation under N+1 has the same shape: C first, B beside it, and B is spent
   c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.next.seedB64, GAMES_SIGNING_KEY_NEXT: fresh.seedB64 } });
@@ -340,6 +342,48 @@ test("the ledger written before this change still reads, and a malformed one ref
   writeJson(path.join(c.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0, spent: { [INDEX_SCHEMA]: [{ key_id: SPENT_A }], [WITHDRAWN_SCHEMA]: [] } });
   assert.throws(() => c.sign(), /E_STATE_SPENT/);
   assert.equal(fs.readFileSync(path.join(c.data, "dist", "games-index.json"), "utf8"), served, "a refused run writes nothing");
+});
+
+test("under N+1 with B alone the run signs as before and warns that A no longer co-signs", () => {
+  const c = makeCatalogue({ withNext: true });
+  const under = c.sign({ env: { GAMES_SIGNING_KEY_NEXT: c.next.seedB64 } });
+  assert.deepEqual(under.warnings, [], "under N, A is still listed: B alone is the routine rotation");
+  c.sign(); // and the bridge, so A's public key is recorded
+  c.useTrust(c.promotedTrust(throwawayKey()));
+  const run = c.sign({ env: { GAMES_SIGNING_KEY_NEXT: c.next.seedB64 } });
+  assert.deepEqual(c.dist("games-index.json").signatures.map((x) => x.key_id), ["astra-games-2026b"]);
+  assert.equal(c.dist("games-index.json").signed.key_id, "games-current");
+  for (const schema of [INDEX_SCHEMA, WITHDRAWN_SCHEMA]) {
+    assert.ok(run.warnings.includes(`astra-games-2026a no longer co-signs ${schema}: clients still on the trust.json that listed it recover after one forced trust refresh`), JSON.stringify(run.warnings));
+  }
+  assert.deepEqual(c.sign().warnings, [], "with A back beside B, no warning");
+});
+
+test("a floors.json that has lost its spent ledger refuses the run (fail closed)", () => {
+  const c = makeCatalogue({ withNext: true });
+  c.sign(); // B and A: A is spent for both schemas
+  const served = fs.readFileSync(path.join(c.data, "dist", "games-index.json"), "utf8");
+  const floorsFile = path.join(c.data, "floors.json");
+  const kept = c.state("floors.json");
+  for (const [why, floors] of [
+    ["serials and no ledger", { kind: "games", index: T0, withdrawn: T0 }],
+    ["null", null],
+    ["a list", []],
+    ["a serial that is not one", { kind: "games", index: "T0", withdrawn: T0, spent: kept.spent }],
+  ]) {
+    writeJson(floorsFile, floors);
+    assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 } }), /E_STATE_SPENT/, why);
+  }
+  fs.rmSync(floorsFile);
+  assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 } }), /E_STATE_SPENT: dist\/ holds signed documents and floors.json is missing/);
+  assert.equal(fs.readFileSync(path.join(c.data, "dist", "games-index.json"), "utf8"), served, "a refused run writes nothing");
+  // with the ledger back, A alone is refused for what it is: spent
+  writeJson(floorsFile, kept);
+  assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 } }), /E_KEY_RETIRED/);
+  // a catalogue that never signed has no floors, and that is not a refusal
+  assert.doesNotThrow(() => makeCatalogue().sign());
+  assert.deepEqual(ids(spentBySchema({})), { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [] });
+  assert.deepEqual(ids(spentBySchema({ kind: "games", index: 0, withdrawn: 0 })), { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [] });
 });
 
 test("a body naming one role signed by the other role's key is refused", () => {

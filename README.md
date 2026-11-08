@@ -131,7 +131,9 @@ advance:
   the ceremony; the old key keeps co-signing until the next promotion. Before
   the new `trust.json` is published, the operator runs
   `node bin/ceremony-ready.mjs --next-trust <candidate trust.json>`, which
-  fetches the live `trust.json` and both documents from both registry hosts.
+  fetches the live `trust.json` and both documents from both registry hosts
+  (which must serve the same `trust.json`), refuses a candidate that is not
+  that promotion, and prints the digest of the body the owner is to sign.
   Publish only on exit 0.
 - Inside the document, `key_id` names the role (`games-current` or
   `games-next`, as AstraPlugins' schema enumerates); the signature's

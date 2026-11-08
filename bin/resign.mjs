@@ -22,6 +22,8 @@ try {
   const report = runSign({ dataDir: data, root: ROOT, trustFile: opt("--trust"), env: process.env, now: Math.floor(Date.now() / 1000) });
   console.log(JSON.stringify(report));
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `issued_at=${report.issuedAt}\nkey_id=${report.keyId}\n`);
+  // signed, but a person should know (signing.mjs droppedCoSigners); an annotation in Actions
+  for (const w of report.warnings ?? []) console.error(`${process.env.GITHUB_ACTIONS === "true" ? "::warning::" : "warning: "}${w}`);
 } catch (e) {
   console.error(`resign refused: ${e.message}`);
   process.exit(1);

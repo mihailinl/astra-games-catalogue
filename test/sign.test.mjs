@@ -12,7 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
-import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, verifyDocument, verifyEnvelopeAll, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
+import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, signatureCheck, verifyDocument, verifyEnvelopeAll, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
 import { verifyingKeys } from "../lib/trust.mjs";
 import { validateMany } from "../lib/schemas.mjs";
 import { nextIssuedAt, selectSigner, selectSigners, signBoth } from "../lib/signing.mjs";
@@ -113,6 +113,30 @@ test("the verifier collects every key, so the order of signatures does not matte
     assert.ok(verifyDocument(bOnly, { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }).some((p) => p.startsWith("the body names games-current")));
   }
   assert.equal(verifyEnvelopeAll(idx, WITHDRAWN_SCHEMA, trusted).ok, false, "the domain is still the verifier's");
+});
+
+test("the verifier counts a signature only in the client's spelling, and a key only from its not_before", () => {
+  const c = makeCatalogue({ withNext: true });
+  c.sign({ candidates: [candidate()] });
+  const idx = c.dist("games-index.json"); // B then A, body games-current
+  const trusted = verifyingKeys(c.kindKeys);
+  const withA = (sig) => ({ ...idx, signatures: idx.signatures.map((x) => (x.key_id === "astra-games-2026a" ? { ...x, sig } : x)) });
+  const a = idx.signatures.find((x) => x.key_id === "astra-games-2026a").sig;
+  assert.match(a, /^[A-Za-z0-9+/]{86}==$/);
+  // Node's base64 decoder reads all of these as A's 64 bytes; the client's strict decoder reads none of them
+  for (const [why, sig] of [["unpadded", a.slice(0, -2)], ["a newline inside", `${a.slice(0, 40)}\n${a.slice(40)}`]]) {
+    assert.equal(Buffer.from(sig, "base64").length, 64, `${why}: Node decodes it`);
+    assert.deepEqual(verifyEnvelopeAll(withA(sig), INDEX_SCHEMA, trusted).verified.map((k) => k.key_id), ["astra-games-2026b"], why);
+    assert.ok(verifyDocument(withA(sig), { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }).some((p) => p.startsWith("the body names games-current")), why);
+  }
+  assert.deepEqual(verifyDocument(withA(` ${a}\n`), { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }), [], "surrounding whitespace is trimmed, as the service trims it");
+
+  // a key counts only once its not_before has come (the client's valid_at(judged_at))
+  const by = (now) => signatureCheck(idx, INDEX_SCHEMA, c.kindKeys, now);
+  assert.deepEqual(by(c.kindKeys.next.notBefore).verifiedBy.map((k) => k.key_id), ["astra-games-2026a", "astra-games-2026b"]);
+  assert.deepEqual(by(c.kindKeys.next.notBefore - 1).verifiedBy.map((k) => k.key_id), ["astra-games-2026a"], "B is not yet a key a second before its not_before");
+  assert.deepEqual(by(c.kindKeys.current.notBefore - 1).problems, ["signature: no games kind key of trust.json has reached its not_before"]);
+  assert.throws(() => signatureCheck(idx, INDEX_SCHEMA, c.kindKeys), /needs now/);
 });
 
 test("the body's key_id enum in the pinned schema names roles, which is what the body carries", () => {
