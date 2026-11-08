@@ -268,6 +268,16 @@ test("an unlisted seed that is not recorded as spent is refused", () => {
   };
   assert.throws(() => signBoth({ state: emptyState(), seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }),
     /E_KEY_NOT_AUTHORISED: astra-games-2026a is neither a games kind key of trust.json nor recorded in floors.json as spent for astra\.games\.index\/1/);
+  // a recorded public key with some other private half is not that key
+  const spentState = emptyState({ spent: { [INDEX_SCHEMA]: [spentA(c)], [WITHDRAWN_SCHEMA]: [spentA(c)] } });
+  const impostor = (schema) => {
+    const sel = withA(schema);
+    return { ...sel, keys: sel.keys.map((k) => (k.role === null ? { ...k, privateKey: seedKey(throwawayKey()) } : k)) };
+  };
+  assert.throws(() => signBoth({ state: spentState, seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: impostor(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: impostor(WITHDRAWN_SCHEMA) } }),
+    /E_KEY_NOT_AUTHORISED: the private half handed in for astra-games-2026a is not that key's/);
+  assert.equal(signBoth({ state: spentState, seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }).index.signed.key_id,
+    "games-current", "recorded as spent, A co-signs");
   // and the run refuses, writing nothing
   c.useTrust(c.promotedTrust(throwawayKey()));
   assert.throws(() => c.sign(), /E_KEY_NOT_AUTHORISED/);
