@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 53ab73936f70cc8278aeb5b6ee1c122fdd865b47, path testdata/content/gen.py.
+# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path testdata/content/gen.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -623,14 +623,14 @@ COMMANDS = {
         node("a", "action", {"action_type": "plugin__dice-roller__roll"}),
         node("e", "end"))),
     "morning": command(UUID + "04", "Morning", [{"type": "event", "event_name": "startup"}],
-                       [{"type": "notify", "title": "Good morning"}]),
+                       [{"type": "notify", "title": "Good morning", "message": "Your day starts now."}]),
     "on-crit": command(UUID + "05", "On crit", workflow=graph(
         node("t", "trigger", {"trigger_type": "plugin__dice-roller__on_natural_20"}),
         node("a", "action", {"action_type": "speak"}),
         node("n", "sticky_note", {"text": "celebrate"}))),
     "conditional": command(UUID + "06", "Conditional", [{"type": "text", "phrases": ["maybe"]}],
-                           [{"type": "condition", "if_true": [{"type": "open_url", "url": "https://example.invalid"}],
-                             "if_false": [{"type": "wait", "ms": 10}]}]),
+                           [{"type": "condition", "expression": "true", "if_true": [{"type": "open_url", "url": "https://example.invalid"}],
+                             "if_false": [{"type": "wait", "milliseconds": 10}]}]),
     "open-file": command(UUID + "07", "Open notes", [{"type": "text", "phrases": ["notes"]}],
                          [{"type": "execute", "shell": "open", "path": "~/notes.txt"}]),
     "event-node-startup": command(UUID + "08", "Startup node", workflow=graph(
@@ -1493,6 +1493,36 @@ def gen_archives() -> None:
         "astra.animpack", {"animpack.toml": at_cap_toml, "clips/a.fbx": b"FBX-AT-CAP"}, body=None,
         kind="vrm", methods={"animpack.toml": 0}))
 
+    # No settings golden before these two was larger than CHAR_FILES' 34 bytes or ever deflated
+    # (bundle_entries defaults a .toml to Deflate, method 8, unless overridden -- CHAR_FILES was
+    # never big enough to tell a server that truncates a deflate read-back from one that does not).
+    # `settings_filler` is sha256-chain hex, not a repeated byte: high enough entropy that Deflate
+    # cannot collapse it past the 100:1 ratio cap (step 5), so these two exercise the SIZE caps and
+    # a real inflate round-trip, never the ratio cap.
+    def settings_filler(label: bytes, n: int) -> bytes:
+        out = bytearray()
+        i = 0
+        while len(out) < n:
+            out += hashlib.sha256(label + str(i).encode()).hexdigest().encode()
+            i += 1
+        return bytes(out[:n])
+
+    def padded_settings(label: bytes, size: int) -> bytes:
+        header, trailer = b'name = "Aiko"\nmodel = "aiko-body"\n# ', b"\n"
+        return header + settings_filler(label, size - len(header) - len(trailer)) + trailer
+
+    # ACCEPT: a deflated character.toml over 1 KiB (method 8, the bundle_entries default for .toml)
+    settings_1kib = padded_settings(b"settings-1kib", 1024 + 200)
+    assert len(settings_1kib) > 1024
+    put("archives/valid/character-settings-deflated-over-1kib.astrachar", bundle(
+        "astra.character", {"characters/aiko/character.toml": settings_1kib}, body=None))
+
+    # boundary ACCEPT: the settings file at EXACTLY the 256 KiB (MAX_SETTINGS) cap, deflated
+    settings_at_cap = padded_settings(b"settings-at-cap", 256 * 1024)
+    assert len(settings_at_cap) == 256 * 1024
+    put("archives/valid/character-settings-at-cap.astrachar", bundle(
+        "astra.character", {"characters/aiko/character.toml": settings_at_cap}, body=None))
+
     # boundary ACCEPT: settings (34 bytes) + 7 packs at the 256 KiB per-file cap + 1 remainder
     # pack = exactly the 2 MiB total cap, not one byte over
     settings_size = len(next(iter(CHAR_FILES.values())))
@@ -1523,6 +1553,14 @@ def gen_archives() -> None:
     utf16_settings = "name = \"Aiko\"\nmodel = \"aiko-body\"\n".encode("utf-16")
     hostile("pack-toml-total-oversized-plus-utf16.astrachar", bundle(
         "astra.character", {"characters/aiko/character.toml": utf16_settings, **many_packs}, body=None,
+        methods=toml_methods))
+
+    # order: both TOML caps (step 8) run BEFORE the blocklist (step 9), so a bundle holding a
+    # BLOCKED file and an over-total TOML must refuse E_BUNDLE_MANIFEST, never E_CONTENT_BLOCKED --
+    # the body here is the SAME allowed VRM as blocked-file-renamed.astrachar, so its sha256 is the
+    # one vectors.json lists in this golden's "blocklist"
+    hostile("pack-toml-total-oversized-and-blocked.astrachar", bundle(
+        "astra.character", {**CHAR_FILES, **many_packs, BODY_PATH: BODY}, body=BODY_PATH,
         methods=toml_methods))
 
     # S7: two packs that are byte-for-byte the SAME part (same part digest, two different ids).
