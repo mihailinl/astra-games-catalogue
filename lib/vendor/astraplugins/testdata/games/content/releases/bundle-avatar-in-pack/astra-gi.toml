@@ -1,0 +1,27 @@
+# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path testdata/games/content/releases/bundle-avatar-in-pack/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: the content catalogue's decoy-allowed-vrm-in-animset.astrapack, byte for
+# byte, declared as an animations part -- an avatar-classified clip (clips/decoy.vrma) inside an
+# animations pack, Allowed VRM meta and all, is refused outright (ingest-v1.md §3 step 11, §4.3).
+# This is the same bundle the content catalogue's own goldens refuse directly, wrapped into a game
+# integration release so the catalogue, the launcher's gi-probe and the server refuse it alike.
+schema = 1
+
+[integration]
+id = "someone.bundle-avatar-in-pack"
+name = "Bundle Avatar In Pack"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "packs/decoy.astrapack"
+kind = "animations"
+title = "decoy"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"

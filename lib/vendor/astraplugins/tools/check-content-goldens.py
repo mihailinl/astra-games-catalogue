@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 53ab73936f70cc8278aeb5b6ee1c122fdd865b47, path tools/check-content-goldens.py.
+# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path tools/check-content-goldens.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -91,6 +91,14 @@ def schema_ok(doc, sch: dict) -> tuple[bool, str]:
         return True, ""
     except schemalite.SchemaError as e:
         return False, str(e)
+
+
+def command_golden_doc(relpath: str):
+    """One command golden, read exactly as the vendored portable-command
+    schema sees it: a PLAIN json.loads, never load_json()/contentlite's
+    strict parser. See the comment above COMMAND_SCHEMA_TABLE's use in
+    main() for why that difference is deliberate."""
+    return json.loads((DATA / relpath).read_text(encoding="utf-8"))
 
 
 # ── trust: the kind_keys reading (trust-kind-keys-v1.md §4) ──────────────
@@ -415,7 +423,7 @@ ACTION_CAPS = {
     "mouse_click": ["controls_input"], "macro": ["controls_input"], "ui_click": ["ui_automation"],
     "ui_type": ["ui_automation"], "clipboard": ["accesses_clipboard"], "screenshot": ["takes_screenshots", "uses_ai"],
     "send_to_ai": ["uses_ai"], "ai_request": ["uses_ai"], "stream_to_chat": ["uses_ai"], "work_task": ["uses_ai"],
-    "open_url": ["opens_urls"], "open_file": ["file_access"], "open_application": ["file_access", "launches_apps"],
+    "open_url": ["opens_urls"], "open_file": ["file_access", "launches_apps"], "open_application": ["file_access", "launches_apps"],
     "play_sound": ["plays_audio"], "control_music": ["plays_audio"], "speak": ["plays_audio"],
     "youtube_play": ["plays_audio"], "set_volume": ["system_control"], "notify": ["sends_notifications"],
     "run_command": ["runs_command"], "companion_animation": ["drives_companion"],
@@ -431,7 +439,7 @@ LINEAR_TAGS = {
     "screenshot", "ui_click", "ui_type", "youtube_play", "run_command", "companion_animation",
     "set_companion_enabled", "work_task", "macro", "dynamic",
 }
-EXECUTE_OPEN_MODE = "open"  # astra-core action.rs: `Execute` with this shell opens a file, it runs nothing
+EXECUTE_OPEN_MODE = "open"  # astra-core action.rs: `Execute` with this shell opens `path` with its default app
 CRITICAL = {"code", "execute", "run_command", "macro"}
 HIGH = {"system", "kill_process", "type_text", "press_keys", "mouse_click", "ui_click", "ui_type", "screenshot",
         "open_url", "open_application", "dynamic", "open_file"}
@@ -476,8 +484,10 @@ def _linear(a, caps, req) -> str:
     if t not in LINEAR_TAGS:
         raise Refusal("E_COMMAND_UNKNOWN_ACTION", f"linear {t!r} is not an Action tag")
     if t == "execute" and a.get("shell") == EXECUTE_OPEN_MODE:
-        caps.add("file_access")  # scan_action / action_danger: `Execute(e) if e.is_open_mode()`
-        return "low"
+        # scan_action / action_danger at Astra 65775237c: `Execute(e) if e.is_open_mode()` is file_access +
+        # launches_apps, High — the default application can be anything (capabilities-v1.md, the table's note)
+        caps.update(("file_access", "launches_apps"))
+        return "high"
     if t == "dynamic":
         pid = plugin_of(str(a.get("handler_id", "")))
         caps.add(f"uses_plugin:{pid}")
@@ -571,6 +581,93 @@ def ingest_command(cmd, claim: dict, served_plugins: dict | None = None) -> dict
             if not ok:
                 raise Refusal("E_COMMAND_REQUIRES_UNLISTED", f"{pid} {req}")
     return got
+
+
+# ── commands: the shape authority (spec/content/commands-index-v1.md's note) ─
+#
+# `derive_command`/`_linear`/`_trigger` above are a hand-rolled reading of a
+# command's shape -- the exact gap that let two goldens drift from the real
+# client (AstraPlugins#154: `notify.message`, `wait.milliseconds`,
+# `condition.expression`) while every check above kept reporting green, twice.
+# `spec/content/schemas/portable-command-v1.schema.json` is not hand-rolled:
+# it is Astra's own `schemars`-generated JSON Schema of the exact Rust type
+# the client parses a command into (vendored byte-identically by
+# `tools/resync-astra.sh`, drift-checked against Astra main). This table
+# states, PER GOLDEN, whether that schema must accept or refuse it, so a
+# schema that quietly stops checking something is a red run, not a smaller
+# green one.
+#
+# #154 fixed the golden bytes this table used to carry a "fail-154" row for
+# (`morning` was missing NotifyAction's required `message`; `conditional` had
+# a wait spelled `ms` instead of `milliseconds` and a condition missing its
+# `expression`) -- both are "pass" rows now, same as every other accept-
+# vector, and the tag is gone: nothing else ever needed it.
+#
+# Four outcomes, one tag each:
+#   "pass"     an accept-vector whose shape the schema must accept.
+#   "fail"     a hostile vector refused at a genuine shape violation (an
+#              unknown Action/Trigger/NodeType tag) -- the schema must refuse
+#              it too, independently of ingest_command()'s own refusal.
+#   "blind-a"  a hostile vector the schema must ACCEPT despite being refused,
+#              because the violation lives inside a graph node's `data`,
+#              which the schema declares `additionalProperties: true` (a
+#              free object -- only `GraphNode`'s own reader in the client
+#              gives its keys meaning, never this schema).
+#   "blind-b"  a hostile vector the schema must ACCEPT despite being refused,
+#              because the violation is a repeated JSON object key: by the
+#              time ANY JSON Schema sees a parsed document the duplicate is
+#              already resolved last-value-wins, so the client's own
+#              E_COMMAND_FORMAT (a raw-text scan, done before any schema
+#              sees the bytes) is invisible here by construction.
+#   "semantic" a hostile vector the schema must ACCEPT despite being refused,
+#              because the violation is a capability/danger/requires
+#              mismatch between the claim and the derived set -- both sides
+#              can be perfectly well-shaped and still disagree; that is
+#              ingest_command()'s job above, never a shape question.
+COMMAND_SCHEMA_TABLE: dict[str, str] = {
+    "commands/valid/greet.command.json": "pass",
+    "commands/valid/build-and-ask.command.json": "pass",
+    "commands/valid/roll-dice.command.json": "pass",
+    "commands/valid/morning.command.json": "pass",
+    "commands/valid/on-crit.command.json": "pass",
+    "commands/valid/conditional.command.json": "pass",
+    "commands/valid/open-file.command.json": "pass",
+    "commands/valid/event-node-startup.command.json": "pass",
+    "commands/hostile/linear-open-file.command.json": "fail",
+    "commands/hostile/event-node-no-config.command.json": "blind-a",
+    "commands/hostile/duplicate-type-key.command.json": "blind-b",
+    "commands/hostile/caps-mismatch.command.json": "semantic",
+    "commands/hostile/unknown-action.command.json": "fail",
+    "commands/hostile/unknown-node-action.command.json": "blind-a",
+    "commands/hostile/unknown-node.command.json": "fail",
+    "commands/hostile/unknown-trigger.command.json": "fail",
+    "commands/hostile/unknown-trigger-node.command.json": "blind-a",
+    "commands/hostile/unknown-event-name.command.json": "semantic",
+    "commands/hostile/undeclared-trigger-cap.command.json": "semantic",
+    "commands/hostile/undeclared-uses-plugin.command.json": "semantic",
+    "commands/hostile/bare-dynamic.command.json": "blind-a",
+    "commands/hostile/two-spellings.command.json": "blind-a",
+    "commands/hostile/danger-understated.command.json": "semantic",
+    "commands/hostile/unparsed-handler.command.json": "semantic",
+    "commands/hostile/sub-workflow.command.json": "semantic",
+    "commands/hostile/requires-unlisted.command.json": "semantic",
+}
+
+COMMAND_SCHEMA_REASON = {
+    "pass": "an accept-vector; the schema must match the client's own types",
+    "fail": "a hostile vector refused at a genuine Action/Trigger/NodeType shape violation",
+    "blind-a": "blind spot: inside a graph node's data (additionalProperties: true) -- "
+               "the client's own GraphNode reader decides this, not the schema",
+    "blind-b": "blind spot: a repeated JSON key -- already resolved last-value-wins by the "
+               "time any JSON Schema sees the parsed document",
+    "semantic": "a capability/danger/requires mismatch -- ingest_command()'s job, not a shape",
+}
+
+# A schema that stops checking most goldens (or a table gutted of its rows)
+# must still be a red run: a floor, not just an exact count, so trimming the
+# table without also shrinking this constant is itself the mutation this
+# guards against (see tools/test_check_content_goldens.py).
+COMMAND_SCHEMA_FLOOR = 26
 
 
 # ── archives (ingest-v1.md §3) ───────────────────────────────────────────
@@ -1519,15 +1616,12 @@ def ingest_bundle(raw: bytes, ctx: dict) -> dict:
     for p in listed:
         if p not in files:
             raise Refusal("E_BUNDLE_FILE_UNLISTED", f"{p} listed and absent")
-    blocked = set(ctx.get("blocklist", []))
-    for p, b in files.items():
-        if hashlib.sha256(b).hexdigest() in blocked:
-            raise Refusal("E_CONTENT_BLOCKED", p)
     body = (man.get("body") or {}).get("file")
     settings_dir = (man.get("character") or {}).get("dir")
     # S2: both archive-limit caps are the manifest step (§3 step 8, E_BUNDLE_MANIFEST) -- before
-    # format (step 10), so an over-total bundle, or one animpack.toml over its own cap, is never
-    # masked by a later refusal. The total check runs first (pure byte-counting, nothing to
+    # the blocklist (step 9) and before format (step 10), so an over-total bundle, or one
+    # animpack.toml over its own cap, is never masked by a later refusal, and never races the
+    # blocklist for which code wins. The total check runs first (pure byte-counting, nothing to
     # parse); the per-file cap lives inside `read_animpack_toml_kind`, reached from
     # `pack_kind`/`parts_of` below. `check_settings` is NOT one of these two caps and stays after
     # the format loop, matching the server (bundle.rs: settings after the format loop).
@@ -1535,6 +1629,13 @@ def ingest_bundle(raw: bytes, ctx: dict) -> dict:
     part_root_of = {f: root for (_pk, root), pf in
                     parts_of(files, body, settings_dir, strict=False,
                              pack=pack_kind(man, files), man=man).items() for f in pf}
+    # step 9: the blocklist, AFTER both step-8 TOML caps above -- a bundle holding a blocked file
+    # AND an over-total TOML must refuse E_BUNDLE_MANIFEST, the TOML cap, not E_CONTENT_BLOCKED
+    # (golden `blocked-file-and-toml-total-oversized`).
+    blocked = set(ctx.get("blocklist", []))
+    for p, b in files.items():
+        if hashlib.sha256(b).hexdigest() in blocked:
+            raise Refusal("E_CONTENT_BLOCKED", p)
     for p, b in files.items():
         why = bom_refusal(p, b)
         if why:
@@ -2012,6 +2113,30 @@ def main() -> int:
         want = v["verdict"] if v["verdict"] == "accept" else v["code"]
         report(f"commands/{v['name']}", outcome == want and flags == v.get("flags", []),
                f"got {outcome} flags={flags}")
+
+    # -- commands (shape authority: the vendored portable-command schema) ---
+    #
+    # Read with a PLAIN json.loads, deliberately never load_json()/contentlite's
+    # strict parser: the point of this block is to see exactly what the schema
+    # itself sees, including its blind-b (duplicate-key) blind spot -- redoing
+    # ingest_command()'s own strict/duplicate-key handling here would hide the
+    # one golden (duplicate-type-key) that exists to prove that blind spot.
+    cmd_dir = DATA / "commands"
+    on_disk = {str(p.relative_to(DATA)) for p in sorted(cmd_dir.rglob("*.command.json"))}
+    report("COMMAND_SCHEMA_TABLE matches the command goldens on disk exactly",
+           set(COMMAND_SCHEMA_TABLE) == on_disk,
+           f"table-only={sorted(set(COMMAND_SCHEMA_TABLE) - on_disk)} "
+           f"disk-only={sorted(on_disk - set(COMMAND_SCHEMA_TABLE))}")
+    report(f"every command golden is schema-checked (floor {COMMAND_SCHEMA_FLOOR})",
+           len(COMMAND_SCHEMA_TABLE) >= COMMAND_SCHEMA_FLOOR, f"got {len(COMMAND_SCHEMA_TABLE)}")
+    pc_schema = schema("portable-command-v1.schema.json")
+    for relpath, tag in sorted(COMMAND_SCHEMA_TABLE.items()):
+        cdoc = command_golden_doc(relpath)
+        sok, detail = schema_ok(cdoc, pc_schema)
+        expect_pass = tag != "fail"
+        report(f"commands schema: {relpath} ({tag})", sok == expect_pass,
+               f"expected {'pass' if expect_pass else 'fail'}, schema said "
+               f"{'pass' if sok else 'fail'} ({detail}) — {COMMAND_SCHEMA_REASON[tag]}")
 
     # -- archives (ingest) -------------------------------------------------
     for v in V["archives"]:
