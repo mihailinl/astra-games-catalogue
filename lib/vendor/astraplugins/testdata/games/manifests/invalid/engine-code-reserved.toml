@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 6dec4be7b6c8788890664de59b87123314e04d9c, path testdata/games/manifests/invalid/engine-code-reserved.toml.
+# VENDORED from mihailinl/AstraPlugins at 53b832785bcc20953f12d471ad1181092a75d774, path testdata/games/manifests/invalid/engine-code-reserved.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Invalid: engine-code-reserved. A foundation tries to claim "unity-mono",
