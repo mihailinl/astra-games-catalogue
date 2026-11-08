@@ -12,7 +12,8 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
-import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, verifyDocument, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
+import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, verifyDocument, verifyEnvelopeAll, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
+import { verifyingKeys } from "../lib/trust.mjs";
 import { validateMany } from "../lib/schemas.mjs";
 import { nextIssuedAt, selectSigner, selectSigners, signBoth } from "../lib/signing.mjs";
 import { emptyModeration } from "../lib/state.mjs";
@@ -73,6 +74,45 @@ test("the signer refuses to run with no key, and a refused run writes nothing", 
   assert.throws(() => c.sign({ env: {} }), /E_KEY_ABSENT/);
   assert.throws(() => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: throwawayKey().seedB64 } }), /E_KEY_NOT_AUTHORISED/);
   assert.equal(fs.existsSync(path.join(c.data, "dist")), false);
+});
+
+test("B alone under N still signs games-next", () => {
+  for (const slot of ["GAMES_SIGNING_KEY_NEXT", "GAMES_SIGNING_KEY_CURRENT"]) {
+    const c = makeCatalogue();
+    const r = c.sign({ env: { [slot]: c.next.seedB64 }, candidates: [candidate()] });
+    for (const [f, domain] of [["games-index.json", INDEX_SCHEMA], ["games-withdrawn.json", WITHDRAWN_SCHEMA]]) {
+      const d = c.dist(f);
+      assert.deepEqual(d.signatures.map((x) => x.key_id), ["astra-games-2026b"], `${slot}: one signature`);
+      assert.equal(d.signed.key_id, "games-next", `${slot}: today's routine rotation, unchanged`);
+      assert.deepEqual(verifyDocument(d, { domain, kindKeys: c.kindKeys, now: T0, indexBody: c.dist("games-index.json").signed }), []);
+    }
+    assert.equal(r.keyId, "astra-games-2026b");
+    assert.deepEqual(c.state("floors.json").spent[INDEX_SCHEMA], [{ key_id: "astra-games-2026a", public_key: c.current.publicB64 }]);
+  }
+});
+
+test("the verifier collects every key, so the order of signatures does not matter", () => {
+  const c = makeCatalogue({ withNext: true });
+  c.sign({ candidates: [candidate()] });
+  const idx = c.dist("games-index.json"); // signed B then A, body games-current
+  const reversed = { ...idx, signatures: [...idx.signatures].reverse() };
+  const trusted = verifyingKeys(c.kindKeys);
+  for (const [order, e] of [["next first", idx], ["current first", reversed]]) {
+    assert.deepEqual(verifyEnvelopeAll(e, INDEX_SCHEMA, trusted).verified.map((k) => k.key_id), ["astra-games-2026a", "astra-games-2026b"], order);
+    assert.deepEqual(verifyDocument(e, { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }), [], order);
+  }
+  // the vendored first-wins verifier sees one key, and which one is up to the order
+  assert.equal(verifyEnvelope(idx, INDEX_SCHEMA, trusted).key_id, "astra-games-2026b");
+  assert.equal(verifyEnvelope(reversed, INDEX_SCHEMA, trusted).key_id, "astra-games-2026a");
+  // an entry naming a key id the verifier does not trust, or a malformed entry, is not counted and is no error
+  const extra = { ...idx, signatures: [{ key_id: "astra-games-1999z", sig: c.dist("games-withdrawn.json").signatures[0].sig }, { key_id: "x", sig: "not base64!" }, { key_id: 7 }, ...idx.signatures] };
+  assert.deepEqual(verifyDocument(extra, { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }), []);
+  // the claim must be among the verifying keys' roles in every order: drop A and the games-current body is refused
+  for (const e of [idx, reversed]) {
+    const bOnly = { ...e, signatures: e.signatures.filter((x) => x.key_id === "astra-games-2026b") };
+    assert.ok(verifyDocument(bOnly, { domain: INDEX_SCHEMA, kindKeys: c.kindKeys, now: T0 }).some((p) => p.startsWith("the body names games-current")));
+  }
+  assert.equal(verifyEnvelopeAll(idx, WITHDRAWN_SCHEMA, trusted).ok, false, "the domain is still the verifier's");
 });
 
 test("the body's key_id enum in the pinned schema names roles, which is what the body carries", () => {
