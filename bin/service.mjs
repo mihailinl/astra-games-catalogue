@@ -37,7 +37,7 @@ import path from "node:path";
 import { githubApi } from "../lib/github.mjs";
 import { LEASE_ID } from "../lib/ingest.mjs";
 import {
-  ingestResultBody, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody, signUnnamed,
+  ingestResultBody, isUnavailable, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { loadPolicy, writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
@@ -57,32 +57,48 @@ const output = (env, pairs) => {
   fs.appendFileSync(env.GITHUB_OUTPUT, Object.entries(pairs).map(([k, v]) => `${k}=${v}\n`).join(""));
 };
 
+/**
+ * `unavailable` (a door shut, a maintenance restart, the rare post-retry
+ * race) is not a failure: the retry already exists by design (an unreported
+ * lease expires and is re-leased). This is the only line the job prints for
+ * it, so a red Actions run and an owner email do not follow a condition the
+ * service's own alarms already cover.
+ */
+const unavailableWarning = (e) => `::warning::${e.door} answered unavailable; nothing settled, the lease expires and is re-leased (the retry)`;
+
 export async function ingestWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console }) {
   const runId = Number(env.GITHUB_RUN_ID);
   const runAttempt = Number(env.GITHUB_RUN_ATTEMPT ?? 1);
   if (!Number.isSafeInteger(runId) || runId < 1) throw new Error("GITHUB_RUN_ID is not a run id");
-  const answer = readLeases(await client.leases({ run_id: runId, run_attempt: runAttempt, max: MAX_LEASES }));
-  const leased = leaseRequests(answer.items);
-  let created = { requests: [], malformed: [] };
-  if (answer.poll.length) {
-    const firstParty = loadPolicy(ROOT).firstParty;
-    const firstPartyIds = new Set((firstParty?.repos ?? []).map((r) => Number(r.repository_id)));
-    const polled = await pollReleases({ repoIds: answer.poll, github, firstPartyIds });
-    for (const id of polled.unanswered) log.warn(`poll: GitHub did not answer for repository ${id}; asked again next run`);
-    const reg = await client.releases({ run_id: runId, found: polled.found });
-    created = leaseRequests(Array.isArray(reg?.created) ? reg.created : []);
+  try {
+    const answer = readLeases(await client.leases({ run_id: runId, run_attempt: runAttempt, max: MAX_LEASES }));
+    const leased = leaseRequests(answer.items);
+    let created = { requests: [], malformed: [] };
+    if (answer.poll.length) {
+      const firstParty = loadPolicy(ROOT).firstParty;
+      const firstPartyIds = new Set((firstParty?.repos ?? []).map((r) => Number(r.repository_id)));
+      const polled = await pollReleases({ repoIds: answer.poll, github, firstPartyIds });
+      for (const id of polled.unanswered) log.warn(`poll: GitHub did not answer for repository ${id}; asked again next run`);
+      const reg = await client.releases({ run_id: runId, found: polled.found });
+      created = leaseRequests(Array.isArray(reg?.created) ? reg.created : []);
+    }
+    const seen = new Set();
+    const requests = [...leased.requests, ...created.requests].filter((r) => !seen.has(r.lease_id) && seen.add(r.lease_id));
+    const malformed = [...leased.malformed, ...created.malformed];
+    for (const m of malformed) log.log(`::error::a lease was dropped, not written: ${m}`);
+    const now = requests.slice(0, MAX_RUN_LEASES);
+    for (const r of requests.slice(MAX_RUN_LEASES)) log.warn(`lease ${r.lease_id} is past this run's ${MAX_RUN_LEASES}; it expires and is leased again`);
+    fs.mkdirSync(out, { recursive: true });
+    for (const r of now) writeJson(path.join(out, `games-request-${r.lease_id}.json`), r);
+    output(env, { leases: JSON.stringify(now.map((r) => r.lease_id)), malformed: malformed.length });
+    log.log(`leased ${now.length} (${leased.requests.length} queued, ${created.requests.length} from a poll of ${answer.poll.length}); ${malformed.length} malformed`);
+    return { leases: now.map((r) => r.lease_id), malformed };
+  } catch (e) {
+    if (!isUnavailable(e)) throw e;
+    log.log(unavailableWarning(e));
+    output(env, { leases: "[]", malformed: 0 });
+    return { leases: [], malformed: [] };
   }
-  const seen = new Set();
-  const requests = [...leased.requests, ...created.requests].filter((r) => !seen.has(r.lease_id) && seen.add(r.lease_id));
-  const malformed = [...leased.malformed, ...created.malformed];
-  for (const m of malformed) log.log(`::error::a lease was dropped, not written: ${m}`);
-  const now = requests.slice(0, MAX_RUN_LEASES);
-  for (const r of requests.slice(MAX_RUN_LEASES)) log.warn(`lease ${r.lease_id} is past this run's ${MAX_RUN_LEASES}; it expires and is leased again`);
-  fs.mkdirSync(out, { recursive: true });
-  for (const r of now) writeJson(path.join(out, `games-request-${r.lease_id}.json`), r);
-  output(env, { leases: JSON.stringify(now.map((r) => r.lease_id)), malformed: malformed.length });
-  log.log(`leased ${now.length} (${leased.requests.length} queued, ${created.requests.length} from a poll of ${answer.poll.length}); ${malformed.length} malformed`);
-  return { leases: now.map((r) => r.lease_id), malformed };
 }
 
 export async function ingestReport({ candidates, env = process.env, client = serviceClient({ env }), log = console }) {
@@ -111,9 +127,14 @@ export async function ingestReport({ candidates, env = process.env, client = ser
       posted.push(lease);
       log.log(`lease ${lease}: ${candidate.verdict} reported`);
     } catch (e) {
-      // the lease ran out or the release moved on: the service has a newer answer
-      if (e instanceof ServiceRefused && ["lease_not_held", "conflict"].includes(e.token)) log.warn(`lease ${lease}: ${e.message}`);
-      else failed.push(`${lease}: ${e.message}`);
+      if (isUnavailable(e)) {
+        log.log(unavailableWarning(e));
+      } else if (e instanceof ServiceRefused && ["lease_not_held", "conflict"].includes(e.token)) {
+        // the lease ran out or the release moved on: the service has a newer answer
+        log.warn(`lease ${lease}: ${e.message}`);
+      } else {
+        failed.push(`${lease}: ${e.message}`);
+      }
     }
   }
   const malformed = Number(env.MALFORMED || 0);
@@ -124,7 +145,20 @@ export async function ingestReport({ candidates, env = process.env, client = ser
 const CANDIDATE_ARTIFACT = /^games-candidate-[A-Za-z0-9_-]{1,64}$/;
 
 export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console }) {
-  const { acts, health } = readWork(await client.work());
+  let work;
+  try {
+    work = readWork(await client.work());
+  } catch (e) {
+    if (!isUnavailable(e)) throw e;
+    log.log(unavailableWarning(e));
+    fs.mkdirSync(out, { recursive: true });
+    writeJson(path.join(out, "acts.json"), []);
+    writeJson(path.join(out, "health.json"), null);
+    output(env, { acts: 0, health: "0", candidates: 0, todo: "false" });
+    log.log("work: unavailable; nothing to sign (resign.yml keeps the daily re-sign)");
+    return { acts: 0, health: false, candidates: 0, todo: false };
+  }
+  const { acts, health } = work;
   let candidates = 0;
   if (env.INGEST_RUN_ID) {
     const r = await github.runArtifacts(env.GITHUB_REPOSITORY, env.INGEST_RUN_ID);
@@ -151,7 +185,8 @@ export async function signReport({ reportFile, env = process.env, client = servi
     await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
     log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
   } catch (e) {
-    failed.push(`sign-results: ${e.message}`);
+    if (isUnavailable(e)) log.log(unavailableWarning(e));
+    else failed.push(`sign-results: ${e.message}`);
   }
   try {
     log.log(`signed wake: HTTP ${await client.signedWake()}`);
