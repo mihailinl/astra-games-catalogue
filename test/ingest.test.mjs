@@ -531,14 +531,14 @@ test("first-party.json: every pin names a listed repository, a plain tag, astra-
 
 // ── first-party by digest pin (merged §5.1) ─────────────────────────────
 
-function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.peak").replace("Staging C# test integration", "Astra in PEAK")), prerelease = false, probe = fakeProbe() } = {}) {
+function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.peak").replace("Staging C# test integration", "Astra in PEAK")), prerelease = false, probe = fakeProbe(), state = emptyState() } = {}) {
   const repo = { id: 1409552680, full_name: "mihailinl/astra-peak", owner: { id: 193032699 }, private: false, visibility: "public", default_branch: "main" };
   const policy = { firstParty: { ...firstParty, pins }, loaders };
   const gh = fakeGh({ sha: sha256(zip) });
   return ingestRelease({
     request: { repo_id: 1409552680, tag: "v1.0.0" },
     policy,
-    state: emptyState(),
+    state,
     reserved,
     deps: {
       github: fakeGithub({ zip, repo, release: { ...fixture("release.json"), prerelease } }),
@@ -648,6 +648,14 @@ test("manifest id: the astra. reserve still applies, and a first-party holder's 
   const c = await run({ zip: stagingZip(m), state: emptyState({ entries: [holder({ account: "mihailinl", repo_id: 1409552680, manifest_id: "astra.peak" })] }) });
   assert.ok(codes(c).includes("E_RESERVED_ID"));
   assert.deepEqual(manifestIdFindings(c).map((f) => f.code), ["E_ID_TAKEN"]);
+});
+
+test("manifest id: a first-party repository takes an id another first-party repository holds (a successor), never a third party's", async () => {
+  // astra-peak (1409552680) and astra-reshade (1412685270) are both rows of first-party.json
+  const moved = (await firstPartyRun({ state: emptyState({ entries: [holder({ account: "mihailinl", repo_id: 1412685270, manifest_id: "astra.peak" })] }) })).c;
+  assert.deepEqual(moved.findings.filter((f) => /^E_ID_/.test(f.code)), []);
+  const third = (await firstPartyRun({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31, manifest_id: "astra.peak" })] }) })).c;
+  assert.deepEqual(manifestIdFindings(third).map((f) => f.code), ["E_ID_TAKEN"]);
 });
 
 test("manifest id: a stored release without meta.manifest_id stops the run, never frees a name silently", async () => {
