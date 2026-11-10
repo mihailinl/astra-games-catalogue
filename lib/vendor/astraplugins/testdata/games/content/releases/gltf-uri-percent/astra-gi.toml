@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 53b832785bcc20953f12d471ad1181092a75d774, path testdata/games/content/releases/gltf-uri-percent/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at 164f8d080bd97a776451a186f8ee0ad4dca45f1c, path testdata/games/content/releases/gltf-uri-percent/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: a .gltf buffer uri ..%2f..%2f..%2f..%2fetc%2fpasswd, with a file of that

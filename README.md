@@ -233,6 +233,58 @@ pulls every pending act, oldest first:
 | `M_SET_RECOMMENDED_FOUNDATION` | `code`, `entry_id` (or null) |
 | `M_PROMOTE` | `entry_id`, `version` of a first-party prerelease |
 | `M_RELEASE_HOLD` | `hold_id` (`<repo_id>@<tag>`), `decision: accept\|refuse` |
+| `M_LIFT` | `repo_id`, `versions`, `entry_id` (only when the row has one) and `lifts_at` (the row's `at`): the withdrawal row to lift; `kinds`: what it expects to remove, a non-empty array of distinct values out of `yank`, `delist`, `deprecate`, `revoke`; `reason_text` |
+
+**A lift** (`M_LIFT`, `games-withdrawn-v1.md` §2.2) is the only thing that ends
+a `revoke` for `security` on a client that has seen it: such a row stays in
+force there even when the list stops carrying it. The act names a row by its
+subject (`repo_id`, `entry_id`, `versions`) and its `at`, and is refused with
+the member that matched nothing when it names none. What the signer holds:
+
+- **It says what it lifts.** `kinds` must be exactly the kinds of the rows
+  (and held takedowns) of that subject and second, or the act is refused
+  with both sets. A row may sit one second after its act's `at` (below), and
+  a lift that copied the act's second must not remove another act's row:
+  naming a delist's second where a security revoke sits lifts nothing. The
+  act log keeps `kinds`; the signed list's lift does not carry it.
+- **One reading of a subject, the client's** (`lib/model.mjs`): `entry_id`
+  trimmed and lowercased, none equal to none only, `versions` byte for byte.
+  Every comparison of two subjects uses it. An act whose `entry_id` a client
+  could not read (empty once trimmed, a control character), or that holds a
+  non-ASCII character not already lowercase, is refused, for a lift and for a
+  withdrawal alike.
+- **One act per subject and second.** A lift carries no act, so it names every
+  row of its subject and second. A row that would share both with another
+  act's row, with a held takedown or with a kept lift takes the first free
+  second after its act's `at`; the act's summary says the row's `at`. The
+  move ends at the signer's clock plus 300 seconds: with no second free up
+  to there the act is refused, never dated where it could not be lifted. So one
+  lift lifts what one act wrote (one row, or a cascade's banner and yank), and
+  a row never lands on a lift. `lifts_at` is therefore the row's `at` from the
+  served list, not the act's.
+- **The row leaves and the lift stays**, in that run. The list holds at most
+  256 lifts; when it is full a lift of a row that was not sticky leaves first,
+  then a security lift applied more than 365 days ago, and otherwise a new
+  security lift is refused. A lift's age runs from when the signer applied
+  it (`applied_at`), not from its own `at`, so none is accepted and dropped
+  in the same run.
+- **A held takedown** it names is dropped and no lift is written (no client
+  saw it). When a foundation's revoke is lifted, the cascade takedowns of it
+  that are still held go too; published dependants' rows keep their own lifts.
+- **Bounds.** Every act's `at`, of any type, is Unix seconds (10^11 or more
+  is refused as milliseconds) and at most 300 seconds ahead of the signer's
+  clock: a withdrawal dated later would be published and could never be
+  lifted. For a lift, `lifts_at` ≤ `at`. At most
+  3 lifts of security revokes in 24 hours, the fourth refused. The takedown
+  bound counts by when the signer applies an act (`withdrawn.json` `spent`),
+  not by the act's own `at`, and a lifted takedown stays counted.
+- **Its own list.** Before signing, and after every act on a copy of the
+  state, the signer checks `lift-not-contradicted`, `one-act-per-second` and
+  `entry-id-readable`, and builds both documents and their canonical form
+  (which refuses a number past 2^53 and half a surrogate pair). An act that
+  would break any of it, or that throws while it is applied, is refused with
+  that reason and the run goes on; it is never applied and then left to fail
+  the run.
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
 both documents in its own run. An act is applied once per confirmation ref:
