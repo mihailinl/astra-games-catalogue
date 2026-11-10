@@ -285,6 +285,37 @@ the member that matched nothing when it names none. What the signer holds:
   would break any of it, or that throws while it is applied, is refused with
   that reason and the run goes on; it is never applied and then left to fail
   the run.
+- **Against the list published last.** A client keeps a security revoke it
+  applied until a lift names it, but a fresh install or a reinstall reads only
+  the current list: a list from which such a row is simply gone is correctly
+  signed and offers the revoked versions to everybody new. So before a key
+  signs, and after every act on its copy of the state, the signer holds the
+  new list to the one it published last (`dist/games-withdrawn.json` on
+  `data`) and refuses:
+  - `sticky-row-vanished`: a security revoke of the last list that this one
+    neither still carries (the same subject in the client's reading, the
+    same `at`, still a security revoke) nor lifts (that subject, `lifts_at`
+    equal to the row's `at`). The message names the subject and the `at`.
+  - `sticky-lift-vanished`: a lift of the last list that this one does not
+    carry, unless retention may drop it: the state records it as the lift of
+    a row that was not sticky, or as applied 365 days ago or more. A lift the
+    state has no record of is read as a young security lift.
+
+  A row that is not sticky may vanish: clients release those by absence. The
+  last list must verify under `trust.json`'s two games keys or a key
+  `floors.json` records as spent for the list, and be the issue `floors.json`
+  says was signed last; anything else (missing after a signing, unreadable,
+  unsigned, older) refuses the run with `E_STATE_PREVIOUS`, never reads as
+  "nothing to compare with". The way back is to put the served list in
+  `dist/` again: it is the same file. A first run is one whose data shows no
+  trace of a signing: no serial floor above 0 or spent key (`floors.json`),
+  no signed index, no recorded act, no accepted release, no lift, held
+  takedown or spent takedown unit. There is no flag. An act that would break
+  either rule is refused as an act; a state that already breaks it (a lost or
+  older `withdrawn.json`) refuses the whole run, `E_SELF_VERIFY`, and nothing
+  is written. What the data alone cannot show is the whole `data` branch
+  replaced at once and consistently, by an older one or by nothing; it is
+  written only by `sign.yml` and `resign.yml`, by fast-forward pushes.
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
 both documents in its own run. An act is applied once per confirmation ref:
