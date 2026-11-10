@@ -98,7 +98,7 @@ function perSchema(c) {
   const nextEnv = { GAMES_SIGNING_KEY_NEXT: c.next.seedB64 };
   const pick = (env, schema, floors) => selectSigner({ env, floors, kindKeys: c.kindKeys, now: T0, schema });
   const signWith = (state, indexEnv, withdrawnEnv) =>
-    signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+    signBoth({ state, seedLoaders: { loaders: [] }, previous: null, kindKeys: c.kindKeys, now: T0,
       signers: { [INDEX_SCHEMA]: pick(indexEnv, INDEX_SCHEMA, state.floors), [WITHDRAWN_SCHEMA]: pick(withdrawnEnv, WITHDRAWN_SCHEMA, state.floors) } });
   return { currentEnv, nextEnv, pick, signWith };
 }
@@ -123,18 +123,21 @@ test("spent is per schema: an index signed by next, then a withdrawn list signed
   assert.throws(() => pick(currentEnv, INDEX_SCHEMA, state.floors), /E_KEY_RETIRED: astra-games-2026a was rotated away from for astra\.games\.index\/1/, "the index never goes back to current");
   // signBoth checks the ledger itself, whatever floors a signer was picked under
   assert.throws(
-    () => signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+    () => signBoth({ state, seedLoaders: { loaders: [] }, previous: null, kindKeys: c.kindKeys, now: T0,
       signers: { [INDEX_SCHEMA]: pick(currentEnv, INDEX_SCHEMA, {}), [WITHDRAWN_SCHEMA]: pick(currentEnv, WITHDRAWN_SCHEMA, {}) } }),
     /E_KEY_RETIRED: astra-games-2026a is spent for astra\.games\.index\/1/,
   );
   assert.throws(
-    () => signBoth({ state, seedLoaders: { loaders: [] }, kindKeys: c.kindKeys, now: T0,
+    () => signBoth({ state, seedLoaders: { loaders: [] }, previous: null, kindKeys: c.kindKeys, now: T0,
       signers: { [INDEX_SCHEMA]: pick(nextEnv, WITHDRAWN_SCHEMA, state.floors), [WITHDRAWN_SCHEMA]: pick(currentEnv, WITHDRAWN_SCHEMA, state.floors) } }),
     /E_SCHEMA/, "a signer picked for one schema does not sign the other",
   );
 
   // the run itself picks one role for both documents: with only current, the index refuses it, and nothing is written
+  // (the data as that first signing leaves it: the floors AND the documents they are the floors of)
   writeJson(path.join(c.data, "floors.json"), state.floors);
+  writeJson(path.join(c.data, "dist", "games-index.json"), first.index);
+  writeJson(path.join(c.data, "dist", "games-withdrawn.json"), first.withdrawn);
   const served = fs.readFileSync(path.join(c.data, "dist", "games-withdrawn.json"), "utf8");
   assert.throws(() => c.sign({ env: currentEnv }), /E_KEY_RETIRED: .* astra\.games\.index\/1/);
   assert.equal(fs.readFileSync(path.join(c.data, "dist", "games-withdrawn.json"), "utf8"), served, "a refused run writes nothing");
@@ -268,7 +271,7 @@ test("an unlisted seed that is not recorded as spent is refused", () => {
     const sel = selectSigner({ env: { GAMES_SIGNING_KEY_NEXT: c.next.seedB64 }, floors: {}, kindKeys: kN1, now: T0, schema });
     return { ...sel, keys: [...sel.keys, { key_id: SPENT_A, role: null, public_key: c.current.publicB64, privateKey: seedKey(c.current), spent: true }] };
   };
-  assert.throws(() => signBoth({ state: emptyState(), seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }),
+  assert.throws(() => signBoth({ state: emptyState(), seedLoaders: { loaders: [] }, previous: null, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }),
     /E_KEY_NOT_AUTHORISED: astra-games-2026a is neither a games kind key of trust.json nor recorded in floors.json as spent for astra\.games\.index\/1/);
   // a recorded public key with some other private half is not that key
   const spentState = emptyState({ spent: { [INDEX_SCHEMA]: [spentA(c)], [WITHDRAWN_SCHEMA]: [spentA(c)] } });
@@ -276,9 +279,9 @@ test("an unlisted seed that is not recorded as spent is refused", () => {
     const sel = withA(schema);
     return { ...sel, keys: sel.keys.map((k) => (k.role === null ? { ...k, privateKey: seedKey(throwawayKey()) } : k)) };
   };
-  assert.throws(() => signBoth({ state: spentState, seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: impostor(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: impostor(WITHDRAWN_SCHEMA) } }),
+  assert.throws(() => signBoth({ state: spentState, seedLoaders: { loaders: [] }, previous: null, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: impostor(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: impostor(WITHDRAWN_SCHEMA) } }),
     /E_KEY_NOT_AUTHORISED: the private half handed in for astra-games-2026a is not that key's/);
-  assert.equal(signBoth({ state: spentState, seedLoaders: { loaders: [] }, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }).index.signed.key_id,
+  assert.equal(signBoth({ state: spentState, seedLoaders: { loaders: [] }, previous: null, kindKeys: kN1, now: T0, signers: { [INDEX_SCHEMA]: withA(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: withA(WITHDRAWN_SCHEMA) } }).index.signed.key_id,
     "games-current", "recorded as spent, A co-signs");
   // and the run refuses, writing nothing
   c.useTrust(c.promotedTrust(throwawayKey()));
@@ -296,14 +299,14 @@ test("a spent key never signs alone", () => {
   // signBoth refuses it too, for a signer selected before A was spent
   const state = loadState(c.data);
   const early = selectSigners({ env: onlyA, floors: {}, kindKeys: c.kindKeys, now: T0 });
-  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, signers: early, kindKeys: c.kindKeys, now: T0 }),
+  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, previous: null, signers: early, kindKeys: c.kindKeys, now: T0 }),
     /E_KEY_RETIRED: astra-games-2026a is spent for astra\.games\.index\/1, and a spent key never signs alone/);
 
   // after the ceremony A is unlisted, and alone it is still a spent key
   const kN1 = c.useTrust(c.promotedTrust(throwawayKey()));
   assert.throws(() => c.sign({ env: onlyA }), /E_KEY_RETIRED: astra-games-2026a was rotated away from/);
   const lone = (schema) => ({ schema, keys: [{ key_id: SPENT_A, role: null, public_key: c.current.publicB64, privateKey: seedKey(c.current), spent: true }] });
-  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, signers: { [INDEX_SCHEMA]: lone(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: lone(WITHDRAWN_SCHEMA) }, kindKeys: kN1, now: T0 }),
+  assert.throws(() => signBoth({ state, seedLoaders: { loaders: [] }, previous: null, signers: { [INDEX_SCHEMA]: lone(INDEX_SCHEMA), [WITHDRAWN_SCHEMA]: lone(WITHDRAWN_SCHEMA) }, kindKeys: kN1, now: T0 }),
     /E_KEY_RETIRED: astra-games-2026a is spent for astra\.games\.index\/1, and a spent key never signs alone/);
 });
 
@@ -315,8 +318,10 @@ test("the ledger written before this change still reads, and a malformed one ref
     assert.throws(() => selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 }, floors: { spent }, kindKeys: c.kindKeys, now: T0, schema: WITHDRAWN_SCHEMA }), /E_KEY_RETIRED/,
       "a bare id still spends the listed key of that id");
   }
-  // a run under N reads the old ledger and records A's public key beside its id ...
-  writeJson(path.join(c.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0, spent: { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [] } });
+  // a run under N reads the old ledger and records A's public key beside its id
+  // (a ledger is written by a run that signed: the floors and dist/ of that run are beside it) ...
+  c.sign();
+  writeJson(path.join(c.data, "floors.json"), { ...c.state("floors.json"), spent: { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [] } });
   c.sign();
   assert.deepEqual(c.state("floors.json").spent, { [INDEX_SCHEMA]: [spentA(c)], [WITHDRAWN_SCHEMA]: [spentA(c)] });
   // ... so after the ceremony the bridge holds

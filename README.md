@@ -285,6 +285,84 @@ the member that matched nothing when it names none. What the signer holds:
   would break any of it, or that throws while it is applied, is refused with
   that reason and the run goes on; it is never applied and then left to fail
   the run.
+- **Against the list published last.** A client keeps a security revoke it
+  applied until a lift names it, but a fresh install or a reinstall reads only
+  the current list: a list from which such a row is simply gone is correctly
+  signed and offers the revoked versions to everybody new. So before a key
+  signs, and after every act on its copy of the state, the signer holds the
+  new list to the one it published last (`dist/games-withdrawn.json` on
+  `data`) and refuses:
+  - `sticky-row-vanished`: a security revoke of the last list that this one
+    neither still carries (the same subject in the client's reading, the
+    same `at`, still a security revoke) nor lifts (that subject, `lifts_at`
+    equal to the row's `at`). The message names the subject and the `at`.
+  - `sticky-lift-vanished`: a lift of the last list that this one does not
+    carry, unless retention may drop it: the state records it as the lift of
+    a row that was not sticky, or as applied 365 days ago or more. A lift the
+    state has no record of is read as a young security lift.
+
+  A row that is not sticky may vanish: clients release those by absence. An
+  act that would break either rule is refused as an act; a state that
+  already breaks it refuses the whole run (`E_SELF_VERIFY`), and nothing is
+  written.
+
+  **What the last list is.** It must verify under `trust.json`'s two games
+  keys, a key `floors.json` records as spent for the list, or a key
+  `floors.json` records as having signed it (`withdrawn_signers`, written
+  with the floor; so an emergency re-key, where `trust.json` names two fresh
+  keys, does not stop the run that ships a revoke; a `floors.json` from
+  before that record is read without it for one run, which writes it). Its
+  serial, the signed index's serial and `floors.json`'s `withdrawn` and
+  `index` are one number written in one step. Anything else (missing after a
+  signing, unreadable, unsigned, an older issue, a mismatch of the four
+  numbers) refuses the run with `E_STATE_PREVIOUS`, never reads as "nothing
+  to compare with". A first run is one whose data shows no trace of a
+  signing: no serial floor above 0 or spent key, no signed index, no
+  recorded act, no accepted release, no lift, held takedown or spent
+  takedown unit. There is no flag.
+
+  **Against `acts/`.** `acts/` is the append-only record of applied acts,
+  and the run also holds the state to it before applying anything
+  (`E_STATE_ACTS`, naming the act's file and ref). Every recorded security
+  `M_REVOKE` must still have its own row in the list or held (by `act_ref`),
+  or have been ended by a later recorded `M_LIFT`. That lift either dropped
+  it while held, or lifted its row and has a lift record in the state that
+  says `sticky: true` with the `applied_at` the lift's own act record gives.
+  The record may be missing only once retention could have dropped it (365
+  days after it was applied). An `M_LIFT` record names the acts whose rows
+  it ended (`summary.lifted_refs`, `dropped_held_refs`).
+
+  **What this sees, and what it does not.** Any one file of `data`, or any
+  set short of all of them, lost or put back from an older run. For
+  example, `withdrawn.json`, `dist/games-withdrawn.json` and `floors.json`
+  put back together leave the signed index ahead. All of `dist/`, `floors.json`
+  and the state put back together still leave `acts/` naming the revoke they
+  lost, and an act the service serves again is answered "applied, seq N",
+  so nothing else would bring it back. A state record edited to call a
+  young security lift not sticky, or old, is refused against `acts/`. What
+  the data cannot show is the whole `data` branch, `acts/` included,
+  replaced at once by an older one or by nothing. GitHub refuses that: the
+  ruleset **"data is append-only"** (id 26959655: `non_fast_forward` and
+  `deletion` on `refs/heads/data`, no bypass actors) admits only
+  fast-forward pushes, which is all `sign.yml` and `resign.yml` make. Rolling
+  `data` back needs an admin to edit or disable that ruleset first. Check it
+  with `gh api repos/mihailinl/astra-games-catalogue/rulesets` (the ruleset
+  is listed, `enforcement: active`) and
+  `gh api repos/mihailinl/astra-games-catalogue/rulesets/26959655`. An
+  anchor outside `data` (the plugins service holding the last serial and
+  list) would close the rest; it needs a contract change and is not here.
+
+  **The way back from a refusal** is the last commit of `data`, whole:
+  `dist/`, `floors.json`, the state files and `acts/` are written by one
+  run and committed together, so they agree. If a manual run of
+  `bin/sign.mjs` stopped part-way (the state is written before `acts/`
+  and `dist/`, so a crash there leaves the floor ahead of `dist/`, and
+  putting back the served list does not help), throw away everything that
+  run wrote and sign again: in the data checkout, `git checkout -- . && git
+  clean -fd` (state, `acts/` and `dist/` together, never one of them). The
+  acts that run applied were never reported, so the service serves them
+  again. In CI this cannot happen: `data` is committed and pushed only after
+  `bin/sign.mjs` succeeds.
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
 both documents in its own run. An act is applied once per confirmation ref:

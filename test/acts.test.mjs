@@ -312,7 +312,9 @@ test("M_LIFT: the row leaves the list and its lift is in it, in the same run", (
   assert.deepEqual(stateOf(c).lifts, [{ repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0, at: T0 + 60, applied_at: T0, by: "mod-1", reason_text: "The advisory named another package.", lifted: ["revoke"], sticky: true }]);
   const recorded = JSON.parse(fs.readFileSync(path.join(c.data, "acts", "000002.json"), "utf8"));
   assert.equal(recorded.type, "M_LIFT");
-  assert.deepEqual(recorded.summary, { lifted: ["revoke"], repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0 });
+  // and which act's row it ended, by that act's ref: acts/ alone ties the lift to its revoke (actsUnaccounted)
+  const revokeRef = JSON.parse(fs.readFileSync(path.join(c.data, "acts", "000001.json"), "utf8")).confirmation.ref;
+  assert.deepEqual(recorded.summary, { lifted: ["revoke"], lifted_refs: [revokeRef], repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0 });
 });
 
 test("M_LIFT: the lift stays in every later list, across runs and other acts", () => {
@@ -469,10 +471,10 @@ test("listProblemsIntroduced: only what the act added, never what the state alre
   const row = { repo_id: 5, versions: "*", act: "revoke", floor_effect: "no-play", reason_code: "security", at: 100 };
   const state = (rows, lifts = []) => ({ withdrawn: { rows, held: [], lifts } });
   const l = { repo_id: 5, versions: "*", lifts_at: 100, at: 200 };
-  assert.deepEqual(listProblemsIntroduced(state([row]), state([row]), T0), []);
-  assert.match(listProblemsIntroduced(state([row]), state([row], [l]), T0)[0], /^lift-not-contradicted: /);
-  assert.match(listProblemsIntroduced(state([row]), state([row, { ...row, act: "delist", floor_effect: "no-offer", reason_code: "policy" }]), T0)[0], /^one-act-per-second: /);
-  assert.deepEqual(listProblemsIntroduced(state([row], [l]), state([row], [l]), T0), [], "already broken is not this act's doing");
+  assert.deepEqual(listProblemsIntroduced(state([row]), state([row]), T0, null), []);
+  assert.match(listProblemsIntroduced(state([row]), state([row], [l]), T0, null)[0], /^lift-not-contradicted: /);
+  assert.match(listProblemsIntroduced(state([row]), state([row, { ...row, act: "delist", floor_effect: "no-offer", reason_code: "policy" }]), T0, null)[0], /^one-act-per-second: /);
+  assert.deepEqual(listProblemsIntroduced(state([row], [l]), state([row], [l]), T0, null), [], "already broken is not this act's doing");
 });
 
 // ── invariant I: one act per subject and second; a row never erases a lift ──
@@ -687,7 +689,11 @@ test("admitHeld drops a held cascade takedown whose cause is gone from the state
   const c = seeded();
   const more = [5, 6, 7].map((n) => ({ ...DEP, slug: `built-on-foo-${n}`, repo_id: 920000010 + n, account: `dep${n}`, owner_id: 800000010 + n }));
   c.sign({ candidates: more.map(candidate) });
-  c.sign({ acts: [act("M_REVOKE", { repo_id: FOO.repo_id, versions: "0.1.0", reason_code: "security" })] });
+  // A revoke that is not for security: its row may leave the list without a
+  // lift (clients release it by absence). A security revoke's may not, and
+  // the same edit then refuses the run (sticky-row-vanished, sign.test.mjs).
+  c.sign({ acts: [act("M_REVOKE", { repo_id: FOO.repo_id, versions: "0.1.0", reason_code: "policy" })] });
+  assert.equal(stateOf(c).held.length, 2);
   // the cause leaves without a lift (a state edit, as the ops stand's --state-only makes)
   const w = stateOf(c);
   w.rows = w.rows.filter((x) => !(x.repo_id === FOO.repo_id && x.act === "revoke"));
@@ -707,9 +713,10 @@ test("M_LIFT names a takedown still HELD over the bound and drops it; nothing wa
   const take = (repo_id) => act("M_YANK", { repo_id, versions: "*", reason_code: "broken" });
   c.sign({ acts: [take(GI.repo_id), take(FOO.repo_id), take(SUCC.repo_id), take(DEP.repo_id)] });
   assert.equal(stateOf(c).held.length, 1);
+  const heldRef = stateOf(c).held[0].row.act_ref;
   const r = c.sign({ acts: [lift({ repo_id: DEP.repo_id, versions: "*", kinds: ["yank"] })] });
   assert.deepEqual(r.refusedActs, []);
-  assert.deepEqual(r.acts[0].summary, { lifted: [], repo_id: DEP.repo_id, versions: "*", lifts_at: T0, dropped_held: ["yank"] });
+  assert.deepEqual(r.acts[0].summary, { lifted: [], lifted_refs: [], repo_id: DEP.repo_id, versions: "*", lifts_at: T0, dropped_held: ["yank"], dropped_held_refs: [heldRef] });
   assert.deepEqual(stateOf(c).held, []);
   assert.deepEqual(withdrawnOf(c).lifts, [], "no client ever saw the row");
   assert.equal(withdrawnOf(c).rows.length, 3);
@@ -960,7 +967,7 @@ test("an act whose text the documents cannot carry (half a surrogate pair) is re
 test("the trial blames an act only for what it brought: a throw while applying is a refusal, a state that already could not be signed is not (N2)", () => {
   const c = seeded();
   const state = loadState(c.data);
-  const o = { now: T0, reserved: undefined, seedLoaders: { add: [], remove: [] } };
+  const o = { now: T0, reserved: undefined, seedLoaders: { add: [], remove: [] }, previous: null };
   assert.equal(unsignable(state, o), null);
   // anything thrown while applying
   const unknown = tryAct({ ...ACTS.M_DEPRECATE(), type: "M_NOPE" }, state, o);
@@ -1018,9 +1025,11 @@ test("a lift is aged from when the signer applied it, never from its own at: dat
   assert.deepEqual(withdrawnOf(c).rows.map((x) => [x.act, x.at]), [["revoke", old]], "the revoke is still in force, and says so");
   assert.equal(withdrawnOf(c).lifts.length, LIFTS_MAX);
   assert.ok(!withdrawnOf(c).lifts.some((l) => l.repo_id === GI.repo_id));
-  // with room for one it is applied, published, and from then on as young as the day it was applied
+  // With room for one it is applied, published, and from then on as young as the day it was applied.
+  // Room is made by a lift a year old: one the last list carried cannot simply be taken out of the
+  // state (sticky-lift-vanished, sign.test.mjs).
   const y = stateOf(c);
-  y.lifts.pop();
+  y.lifts[0].applied_at = T0 - LIFT_KEEP_SECONDS;
   writeWithdrawn(c, y);
   assert.deepEqual(c.sign({ acts: [lift({ lifts_at: old }, old)] }).refusedActs, []);
   assert.deepEqual(withdrawnOf(c).lifts[0], { repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: old, at: old }, "published, the oldest by its date");
