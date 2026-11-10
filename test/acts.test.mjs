@@ -312,7 +312,9 @@ test("M_LIFT: the row leaves the list and its lift is in it, in the same run", (
   assert.deepEqual(stateOf(c).lifts, [{ repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0, at: T0 + 60, applied_at: T0, by: "mod-1", reason_text: "The advisory named another package.", lifted: ["revoke"], sticky: true }]);
   const recorded = JSON.parse(fs.readFileSync(path.join(c.data, "acts", "000002.json"), "utf8"));
   assert.equal(recorded.type, "M_LIFT");
-  assert.deepEqual(recorded.summary, { lifted: ["revoke"], repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0 });
+  // and which act's row it ended, by that act's ref: acts/ alone ties the lift to its revoke (actsUnaccounted)
+  const revokeRef = JSON.parse(fs.readFileSync(path.join(c.data, "acts", "000001.json"), "utf8")).confirmation.ref;
+  assert.deepEqual(recorded.summary, { lifted: ["revoke"], lifted_refs: [revokeRef], repo_id: GI.repo_id, versions: "<=1.0.0", lifts_at: T0 });
 });
 
 test("M_LIFT: the lift stays in every later list, across runs and other acts", () => {
@@ -711,9 +713,10 @@ test("M_LIFT names a takedown still HELD over the bound and drops it; nothing wa
   const take = (repo_id) => act("M_YANK", { repo_id, versions: "*", reason_code: "broken" });
   c.sign({ acts: [take(GI.repo_id), take(FOO.repo_id), take(SUCC.repo_id), take(DEP.repo_id)] });
   assert.equal(stateOf(c).held.length, 1);
+  const heldRef = stateOf(c).held[0].row.act_ref;
   const r = c.sign({ acts: [lift({ repo_id: DEP.repo_id, versions: "*", kinds: ["yank"] })] });
   assert.deepEqual(r.refusedActs, []);
-  assert.deepEqual(r.acts[0].summary, { lifted: [], repo_id: DEP.repo_id, versions: "*", lifts_at: T0, dropped_held: ["yank"] });
+  assert.deepEqual(r.acts[0].summary, { lifted: [], lifted_refs: [], repo_id: DEP.repo_id, versions: "*", lifts_at: T0, dropped_held: ["yank"], dropped_held_refs: [heldRef] });
   assert.deepEqual(stateOf(c).held, []);
   assert.deepEqual(withdrawnOf(c).lifts, [], "no client ever saw the row");
   assert.equal(withdrawnOf(c).rows.length, 3);

@@ -15,11 +15,12 @@ import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registr
 import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, signatureCheck, successorProblems, verifyDocument, verifyEnvelopeAll, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
 import { LIFT_KEEP_SECONDS, LIFTS_MAX } from "../lib/model.mjs";
 import { lastWithdrawn, listProblemsIntroduced, tryAct } from "../lib/pipeline.mjs";
+import { actsUnaccounted } from "../lib/acts.mjs";
 import { verifyingKeys } from "../lib/trust.mjs";
 import { validateMany } from "../lib/schemas.mjs";
 import { nextIssuedAt, selectSigner, selectSigners, signBoth } from "../lib/signing.mjs";
 import { emptyModeration, loadState, writeJson } from "../lib/state.mjs";
-import { act, candidate, FOO_DESCRIPTOR, makeCatalogue, T0 } from "./catalogue.mjs";
+import { act, candidate, FOO_DESCRIPTOR, kindKeyRow, makeCatalogue, T0 } from "./catalogue.mjs";
 import { throwawayKey } from "./helpers.mjs";
 
 test("both documents are signed in one run, verify under the registry's verifier, and validate through schemalite", () => {
@@ -50,7 +51,10 @@ test("serial = issued_at, strictly above the kind's floor; a floor more than a d
   c.sign();
   c.sign();
   assert.equal(c.dist("games-index.json").signed.serial, T0 + 1, "a second run in the same second still moves forward");
-  assert.deepEqual(c.state("floors.json"), { kind: "games", index: T0 + 1, withdrawn: T0 + 1, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [] } });
+  assert.deepEqual(c.state("floors.json"), {
+    kind: "games", index: T0 + 1, withdrawn: T0 + 1, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [] },
+    withdrawn_signers: [{ key_id: "astra-games-2026a", public_key: c.current.publicB64 }],
+  });
   assert.equal(nextIssuedAt({ now: 100, floors: { index: 50, withdrawn: 99 } }), 100);
   assert.equal(nextIssuedAt({ now: 100, floors: { index: 150, withdrawn: 99 } }), 151);
   assert.throws(() => nextIssuedAt({ now: 100, floors: { index: 100 + 86400, withdrawn: 0 } }), /E_SERIAL_AHEAD/);
@@ -318,6 +322,25 @@ function revoked() {
   return c;
 }
 
+/**
+ * A state that lost a security revoke, refused twice over: by acts/, the
+ * record that still names the act (E_STATE_ACTS, before anything is applied),
+ * and, with acts/ lost too, by the list published last (sticky-row-vanished).
+ */
+const LOST = "is neither in withdrawn\\.json \\(row or held, by its ref\\) nor ended by a recorded lift";
+const refusedBoth = (c, run, pattern, why = LOST) => {
+  refusedUnchanged(c, run, new RegExp(`^Error: E_STATE_ACTS: act-unaccounted: acts/000001\\.json \\(ref act-\\d+\\), a security revoke of repo ${REPO}  <=1\\.0\\.0, ${why}`));
+  const acts = path.join(c.data, "acts");
+  const kept = fs.mkdtempSync(path.join(path.dirname(c.data), "acts-"));
+  fs.cpSync(acts, kept, { recursive: true });
+  fs.rmSync(acts, { recursive: true });
+  try {
+    refusedUnchanged(c, run, pattern);
+  } finally {
+    fs.cpSync(kept, acts, { recursive: true });
+  }
+};
+
 const VANISHED_ROW = new RegExp(`^Error: E_SELF_VERIFY: withdrawn: sticky-row-vanished: repo ${REPO}  <=1\\.0\\.0 at ${T0} is a security revoke in the list published before this one`);
 
 test("a sticky row that stays is signed again, day after day, and so is one lifted by its act", () => {
@@ -335,12 +358,13 @@ test("a sticky row that stays is signed again, day after day, and so is one lift
 
 test("a sticky row dropped from the state with no lift refuses the run, naming the subject and its at, and nothing is written", () => {
   const c = revoked();
+  const [row] = c.state("withdrawn.json").rows;
   editState(c, (w) => { w.rows = []; });
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
+  refusedBoth(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
   // an act in the same run does not get it through, and is not blamed for it: the run stops, the act is served again
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY, acts: [act("M_DEPRECATE", { repo_id: REPO, versions: "<2.0.0", reason_code: "broken" }, T0 + DAY)] }), VANISHED_ROW);
+  refusedBoth(c, () => c.sign({ now: T0 + DAY, acts: [act("M_DEPRECATE", { repo_id: REPO, versions: "<2.0.0", reason_code: "broken" }, T0 + DAY)] }), VANISHED_ROW);
   // put back, it signs
-  editState(c, (w) => { w.rows = [{ ...STICKY, act_ref: "act-x" }]; });
+  editState(c, (w) => { w.rows = [row]; });
   c.sign({ now: T0 + DAY });
   assert.deepEqual(listOf(c).rows, [STICKY]);
 });
@@ -351,10 +375,10 @@ test("a sticky row whose at was changed, or that is no longer a security revoke,
   refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
   const d = revoked();
   editState(d, (w) => { w.rows[0].reason_code = "policy"; });
-  refusedUnchanged(d, () => d.sign({ now: T0 + DAY }), VANISHED_ROW);
+  refusedBoth(d, () => d.sign({ now: T0 + DAY }), VANISHED_ROW);
   const e = revoked();
   editState(e, (w) => { Object.assign(w.rows[0], { act: "yank", floor_effect: "no-offer", reason_code: "broken" }); });
-  refusedUnchanged(e, () => e.sign({ now: T0 + DAY }), VANISHED_ROW);
+  refusedBoth(e, () => e.sign({ now: T0 + DAY }), VANISHED_ROW);
   // another version range is another subject
   const f = revoked();
   editState(f, (w) => { w.rows[0].versions = "<=1.0.1"; });
@@ -379,16 +403,17 @@ test("a state file replaced by an older one refuses the run", () => {
   c.sign({ acts: [revoke()] });
   const withRow = fs.readFileSync(withdrawnFile(c), "utf8");
   fs.writeFileSync(withdrawnFile(c), older);
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
+  refusedBoth(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
   // the file lost altogether reads as an empty state: the same refusal
   fs.rmSync(withdrawnFile(c));
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
+  refusedBoth(c, () => c.sign({ now: T0 + DAY }), VANISHED_ROW);
   // and an older state from after the lift has lost the lift
   fs.writeFileSync(withdrawnFile(c), withRow);
   c.sign({ now: T0 + DAY, acts: [liftAct({}, T0 + DAY)] });
   fs.writeFileSync(withdrawnFile(c), older);
-  refusedUnchanged(c, () => c.sign({ now: T0 + 2 * DAY }),
-    new RegExp(`^Error: E_SELF_VERIFY: withdrawn: sticky-lift-vanished: repo ${REPO}  <=1\\.0\\.0 at ${T0} is lifted in the list published before this one .*; the state has no record of it`));
+  refusedBoth(c, () => c.sign({ now: T0 + 2 * DAY }),
+    new RegExp(`^Error: E_SELF_VERIFY: withdrawn: sticky-lift-vanished: repo ${REPO}  <=1\\.0\\.0 at ${T0} is lifted in the list published before this one .*; the state has no record of it`),
+    "was lifted by acts/000002\\.json \\(ref act-\\d+, applied at \\d+\\), and withdrawn\\.json keeps no record of that lift as a security lift applied then");
   // with the row back and the lift gone, both the row is not contradicted and the lift is still owed
   fs.writeFileSync(withdrawnFile(c), withRow);
   refusedUnchanged(c, () => c.sign({ now: T0 + 2 * DAY }), /sticky-lift-vanished/);
@@ -517,22 +542,156 @@ test("dist/ lost together with floors.json and acts/ is still not a first run: w
   assert.deepEqual(listOf(d).rows, []);
 });
 
-test("the previous list verifies under the keys this signer signed lists with: trust.json's two, and a key floors.json records as spent for the list", () => {
+test("the state, its list and floors.json put back together from an older run: the index signed beside them, then acts/, refuse it", () => {
+  const c = makeCatalogue();
+  c.sign({ candidates: [candidate({ repo_id: REPO, slug: "peak-gi" })] });
+  const files = ["withdrawn.json", "dist/games-withdrawn.json", "floors.json"];
+  const saved = Object.fromEntries([...files, "dist/games-index.json"].map((f) => [f, fs.readFileSync(path.join(c.data, f), "utf8")]));
+  const revokeAct = revoke({}, T0 + 100);
+  assert.deepEqual(c.sign({ acts: [revokeAct] }).refusedActs, []);
+  assert.deepEqual(listOf(c).rows, [{ ...STICKY, at: T0 + 100 }]);
+  const putBack = (fs_) => { for (const f of fs_) fs.writeFileSync(path.join(c.data, f), saved[f]); };
+  // the review's reproduction: three files, consistent with each other
+  putBack(files);
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`^Error: E_STATE_PREVIOUS: dist/games-index\\.json is serial ${T0 + 1}, floors\\.json says index ${T0} and withdrawn ${T0}, and dist/games-withdrawn\\.json is serial ${T0}: signed in one step, they are one number`));
+  // the index put back too: acts/ still records the revoke, by its ref
+  putBack(["dist/games-index.json"]);
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`^Error: E_STATE_ACTS: act-unaccounted: acts/000001\\.json \\(ref ${revokeAct.confirmation.ref}\\), a security revoke of repo ${REPO}  <=1\\.0\\.0, ${LOST}`));
+  // and the service serving the act again does not bring it back: it was applied, once
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY, acts: [revokeAct] }), /E_STATE_ACTS/);
+});
+
+test("the index beside the list is missing, unreadable, or of another serial: refused, naming the numbers", () => {
+  const c = revoked();
+  const index = path.join(c.data, "dist", "games-index.json");
+  const kept = fs.readFileSync(index, "utf8");
+  fs.rmSync(index);
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), /^Error: E_STATE_PREVIOUS: dist\/games-index\.json is missing beside dist\/games-withdrawn\.json/);
+  fs.writeFileSync(index, "{");
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), /^Error: E_STATE_PREVIOUS: dist\/games-index\.json cannot be read/);
+  const env = JSON.parse(kept);
+  writeJson(index, { ...env, signed: { ...env.signed, serial: env.signed.serial + 1 } });
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`dist/games-index\\.json is serial ${T0 + 2}, floors\\.json says index ${T0 + 1} and withdrawn ${T0 + 1}`));
+  // floors.json's two serials disagree with each other
+  fs.writeFileSync(index, kept);
+  const floors = c.state("floors.json");
+  writeJson(path.join(c.data, "floors.json"), { ...floors, index: floors.index - 1 });
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`dist/games-index\\.json is serial ${T0 + 1}, floors\\.json says index ${T0} and withdrawn ${T0 + 1}`));
+  writeJson(path.join(c.data, "floors.json"), floors);
+  c.sign({ now: T0 + DAY });
+});
+
+test("a lift's record in the state edited to say it was not a security lift, or was applied long ago, is refused against acts/", () => {
+  const c = revoked();
+  assert.deepEqual(c.sign({ acts: [liftAct()] }).refusedActs, []);
+  const lift = c.state("withdrawn.json").lifts[0];
+  assert.equal(lift.sticky, true);
+  const WHY = "was lifted by acts/000002\\.json \\(ref act-\\d+, applied at \\d+\\), and withdrawn\\.json keeps no record of that lift as a security lift applied then";
+  const refused = new RegExp(`^Error: E_STATE_ACTS: act-unaccounted: acts/000001\\.json \\(ref act-\\d+\\), a security revoke of repo ${REPO}  <=1\\.0\\.0, ${WHY}`);
+  for (const edit of [{ sticky: false }, { sticky: undefined }, { applied_at: lift.applied_at - LIFT_KEEP_SECONDS }, { lifts_at: lift.lifts_at + 1 }, { versions: "*" }]) {
+    editState(c, (w) => { w.lifts = [{ ...lift, ...edit }]; });
+    refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), refused);
+  }
+  editState(c, (w) => { w.lifts = []; });
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), refused);
+  // as the signer wrote it, it signs; and a year after it was applied, retention may drop it and acts/ does not ask for it
+  editState(c, (w) => { w.lifts = [lift]; });
+  c.sign({ now: T0 + DAY });
+  editState(c, (w) => { w.lifts = []; });
+  fs.rmSync(path.join(c.data, "dist", "games-withdrawn.json")); // the list's own rule is the other half (successorProblems); here acts/ alone
+  const state = loadState(c.data);
+  assert.deepEqual(actsUnaccounted(state, T0 + LIFT_KEEP_SECONDS), []);
+  assert.equal(actsUnaccounted(state, T0 + LIFT_KEEP_SECONDS - 1).length, 1);
+});
+
+test("actsUnaccounted: a held revoke dropped by a lift is ended; a revoke still held is there; a lift recorded before lifted_refs is matched by subject and second", () => {
+  const rec = (seq, type, payload, summary, applied_at = T0) => ({ ...act(type, payload), seq, applied_at, summary });
+  const base = { repo_id: REPO, versions: "<=1.0.0", reason_code: "security" };
+  const rv = rec(1, "M_REVOKE", base, { applied: 1, held: 0, at: T0 });
+  const ref = rv.confirmation.ref;
+  const state = (o = {}) => ({ acts: [rv], withdrawn: { rows: [], held: [], lifts: [], spent: [], ...o } });
+  assert.match(actsUnaccounted(state(), T0)[0], new RegExp(`^act-unaccounted: acts/000001\\.json \\(ref ${ref}\\)`));
+  assert.deepEqual(actsUnaccounted(state({ rows: [{ ...STICKY, act_ref: ref }] }), T0), []);
+  assert.deepEqual(actsUnaccounted(state({ held: [{ row: { ...STICKY, act_ref: ref }, held_at: T0 }] }), T0), []);
+  assert.equal(actsUnaccounted(state({ rows: [{ ...STICKY, act_ref: ref, cascade: true }] }), T0).length, 1, "a cascade row is not the act's own");
+  assert.equal(actsUnaccounted(state({ rows: [{ ...STICKY, act_ref: ref, reason_code: "policy" }] }), T0).length, 1, "its own row, no longer a security revoke");
+  assert.deepEqual(actsUnaccounted(state({ rows: [{ ...STICKY }] }), T0), [], "a row from before act_ref counts by its subject");
+  assert.deepEqual(actsUnaccounted({ ...state(), acts: [rec(1, "M_REVOKE", { ...base, reason_code: "policy" }, { applied: 1, held: 0, at: T0 })] }, T0), [], "only a security revoke is sticky");
+  // ended by a later lift
+  const dropped = rec(2, "M_LIFT", { ...SUBJECT, lifts_at: T0 }, { lifted: [], lifted_refs: [], dropped_held: ["revoke"], dropped_held_refs: [ref] });
+  assert.deepEqual(actsUnaccounted({ ...state(), acts: [rv, dropped] }, T0), []);
+  assert.equal(actsUnaccounted({ ...state(), acts: [{ ...dropped, seq: 0 }, rv] }, T0).length, 1, "a lift recorded before the revoke ended nothing of it");
+  const other = rec(2, "M_LIFT", { ...SUBJECT, lifts_at: T0 }, { lifted: ["revoke"], lifted_refs: ["act-other"] });
+  assert.equal(actsUnaccounted({ ...state({ lifts: [{ ...LIFT, sticky: true, applied_at: T0 }] }), acts: [rv, other] }, T0).length, 1, "a lift of another act's row of the subject");
+  // recorded before lifted_refs: by subject (the client's reading) and lifts_at = the revoke's row at
+  const old = (o = {}) => rec(2, "M_LIFT", { ...SUBJECT, entry_id: undefined, lifts_at: T0, ...o }, { lifted: ["revoke"] });
+  const kept = { lifts: [{ ...LIFT, sticky: true, applied_at: T0 }] };
+  assert.deepEqual(actsUnaccounted({ ...state(kept), acts: [rv, old()] }, T0), []);
+  assert.equal(actsUnaccounted({ ...state(kept), acts: [rv, old({ lifts_at: T0 + 1 })] }, T0).length, 1);
+  assert.equal(actsUnaccounted({ ...state(kept), acts: [rv, old({ versions: "*" })] }, T0).length, 1);
+});
+
+test("the previous list verifies under the keys this signer signed lists with: trust.json's two, a key floors.json records as spent for the list, and the keys it records as having signed it", () => {
   const c = revoked(); // signed by A alone
   const spentA = { key_id: "astra-games-2026a", public_key: c.current.publicB64 };
-  // a ceremony drops A from trust.json; the ledger is what still names it
+  // a ceremony drops A from trust.json; the ledger, and the record of who signed the list, still name it
   const kN1 = c.useTrust(c.promotedTrust(throwawayKey()));
-  const floors = c.state("floors.json");
+  const { withdrawn_signers: signers, ...floors } = c.state("floors.json");
+  assert.deepEqual(signers, [spentA], "the run that signed the list recorded its signers beside the floor");
   const state = () => loadState(c.data);
+  const put = (f) => writeJson(path.join(c.data, "floors.json"), f);
+  assert.deepEqual(lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }).body.rows, [STICKY]);
+  // a floors.json from before that record: trust.json and the spent ledger only, as before
+  put(floors);
   assert.throws(() => lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }), /^Error: E_STATE_PREVIOUS: dist\/games-withdrawn\.json does not verify: no trusted key signed this document \(trusted: astra-games-2026b, astra-games-2026c; it names astra-games-2026a\)/);
   // spent for the index only is not spent for the list
-  writeJson(path.join(c.data, "floors.json"), { ...floors, spent: { [INDEX_SCHEMA]: [spentA], [WITHDRAWN_SCHEMA]: [] } });
+  put({ ...floors, spent: { [INDEX_SCHEMA]: [spentA], [WITHDRAWN_SCHEMA]: [] } });
   assert.throws(() => lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }), /does not verify/);
   // a bare key id (a ledger entry from before 2026-11-07) names no public key to verify under
-  writeJson(path.join(c.data, "floors.json"), { ...floors, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: ["astra-games-2026a"] } });
+  put({ ...floors, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: ["astra-games-2026a"] } });
   assert.throws(() => lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }), /does not verify/);
-  writeJson(path.join(c.data, "floors.json"), { ...floors, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [spentA] } });
+  put({ ...floors, spent: { [INDEX_SCHEMA]: [], [WITHDRAWN_SCHEMA]: [spentA] } });
   assert.deepEqual(lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }).body.rows, [STICKY]);
+  // the record names the keys that signed: another key there verifies nothing, and a malformed one refuses
+  put({ ...floors, withdrawn_signers: [{ key_id: "astra-games-2026a", public_key: throwawayKey().publicB64 }] });
+  assert.throws(() => lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }), /does not verify/);
+  for (const bad of [[], [{ key_id: "astra-games-2026a" }], [{ ...spentA, role: "current" }], ["astra-games-2026a"], { ...spentA }, null]) {
+    put({ ...floors, withdrawn_signers: bad });
+    assert.throws(() => lastWithdrawn({ dataDir: c.data, state: state(), kindKeys: kN1 }), /^Error: E_STATE_PREVIOUS: floors\.json withdrawn_signers is .*, not a non-empty list of \{key_id, public_key\}/, JSON.stringify(bad));
+  }
+});
+
+test("an emergency re-key does not stop the run that ships a security revoke: neither old key in trust.json or the environment", () => {
+  const c = makeCatalogue();
+  c.sign({ candidates: [candidate({ repo_id: REPO, slug: "peak-gi" })] }); // A signs alone
+  // both games seeds leaked from one environment: trust.json names two fresh keys, A and B are gone from it and from the env
+  const d = throwawayKey();
+  const e = throwawayKey();
+  c.useTrust(c.trustWith([kindKeyRow("games", "current", "astra-games-2026d", d), kindKeyRow("games", "next", "astra-games-2026e", e)], { serial: 6 }));
+  const r = c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: d.seedB64 }, acts: [revoke()] });
+  assert.deepEqual(r.refusedActs, []);
+  assert.deepEqual(listOf(c).rows, [STICKY]);
+  assert.deepEqual(c.dist("games-withdrawn.json").signatures.map((x) => x.key_id), ["astra-games-2026d"]);
+  assert.deepEqual(c.state("floors.json").withdrawn_signers, [{ key_id: "astra-games-2026d", public_key: d.publicB64 }]);
+  // and the next run holds that list to the one before as usual
+  editState(c, (w) => { w.rows = []; });
+  fs.rmSync(path.join(c.data, "acts"), { recursive: true });
+  refusedUnchanged(c, () => c.sign({ env: { GAMES_SIGNING_KEY_CURRENT: d.seedB64 }, now: T0 + DAY }), VANISHED_ROW);
+  // the review's case: A signed, a ceremony promotes B and adds C, only B in the environment
+  const b = makeCatalogue();
+  b.sign({ candidates: [candidate({ repo_id: REPO, slug: "peak-gi" })] });
+  b.useTrust(b.promotedTrust(throwawayKey()));
+  assert.deepEqual(b.sign({ env: { GAMES_SIGNING_KEY_CURRENT: b.next.seedB64 }, acts: [revoke()] }).refusedActs, []);
+  assert.deepEqual(listOf(b).rows, [STICKY]);
+});
+
+test("a floors.json from before withdrawn_signers: one run reads without it, and writes it", () => {
+  const c = makeCatalogue();
+  c.sign();
+  const { withdrawn_signers: _, ...legacy } = c.state("floors.json");
+  writeJson(path.join(c.data, "floors.json"), legacy);
+  c.sign();
+  assert.deepEqual(c.state("floors.json").withdrawn_signers, [{ key_id: "astra-games-2026a", public_key: c.current.publicB64 }]);
 });
 
 // the rule itself, on two bodies
