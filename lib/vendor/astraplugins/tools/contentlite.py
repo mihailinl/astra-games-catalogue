@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at ae035207bfaa3f05cc2ff4dda2fcfd14115798bd, path tools/contentlite.py.
+# VENDORED from mihailinl/AstraPlugins at 164f8d080bd97a776451a186f8ee0ad4dca45f1c, path tools/contentlite.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3

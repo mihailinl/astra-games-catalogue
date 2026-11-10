@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at ae035207bfaa3f05cc2ff4dda2fcfd14115798bd, path testdata/games/manifests/valid/foundation-dependency-claim.toml.
+# VENDORED from mihailinl/AstraPlugins at 164f8d080bd97a776451a186f8ee0ad4dca45f1c, path testdata/games/manifests/valid/foundation-dependency-claim.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Valid: a game-specific GI built on another author's foundation, declared
