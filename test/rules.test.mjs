@@ -12,7 +12,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { CODES } from "../lib/codes.mjs";
-import { engineCodeFindings, descriptorCodes, manifestFindings, skeleton, entryIdFor } from "../lib/rules.mjs";
+import { engineCodeFindings, descriptorCodes, manifestFindings, skeleton, entryIdFor, tagNamesVersion } from "../lib/rules.mjs";
 import { loadReserved, readTomlFile, validateMany } from "../lib/schemas.mjs";
 import { VENDOR } from "../lib/vendored.mjs";
 
@@ -80,4 +80,88 @@ test("entry ids: account prefix dropped, dots become dashes, the spec's spelling
   assert.equal(entryIdFor("mihailinl", "astra.unity"), "mihailinl/astra-unity");
   assert.equal(skeleton("staging-csharp-g1"), skeleton("staging-csharp-gi"));
   assert.notEqual(skeleton("peak"), skeleton("lethal"));
+});
+
+// ── the release tag names the version (manifest.md §2) ─────────────────────
+//
+// The first four prefixed tags are the ones first-party.json pins. Until
+// 2026-11-09 the check stripped one leading "v" and compared the rest, so
+// each of them was refused E_VERSION_TAG_MISMATCH.
+
+const TAG_NAMES = [
+  ["0.8.1", "0.8.1"],
+  ["v0.8.1", "0.8.1"],
+  ["il2cpp-v0.8.1", "0.8.1"],
+  ["ds1-v0.1.1", "0.1.1"],
+  ["ds2-v0.1.1", "0.1.1"],
+  ["gta3-v0.3.1", "0.3.1"],
+  ["v0.1.0-discovery", "0.1.0-discovery"],
+  ["0.1.0-discovery", "0.1.0-discovery"],
+  ["a.b-c-v1.0.0+build.5", "1.0.0+build.5"],
+  ["x-v1.0.0", "1.0.0"],
+  ["7-v1.0.0", "1.0.0"],
+  ["il2cpp-v0.1.0-discovery", "0.1.0-discovery"],
+  // a tag may name two versions, and a release carries one manifest, so only one is ever asked about
+  ["a-v1.0.0-v2.0.0", "2.0.0"],
+  ["a-v1.0.0-v2.0.0", "1.0.0-v2.0.0"],
+];
+
+const TAG_DOES_NOT_NAME = [
+  ["il2cpp-0.8.1", "0.8.1", "the -v after a prefix is required"],
+  ["il2cpp-v0.8.2", "0.8.1", "another version"],
+  ["IL2CPP-v0.8.1", "0.8.1", "a prefix is lowercase"],
+  ["Il2cpp-v0.8.1", "0.8.1", "a prefix is lowercase"],
+  ["-v0.8.1", "0.8.1", "an empty prefix"],
+  ["il2cpp--v0.8.1", "0.8.1", "a prefix ends with a letter or a digit"],
+  ["il2cpp.-v0.8.1", "0.8.1", "a prefix ends with a letter or a digit"],
+  [".il2cpp-v0.8.1", "0.8.1", "a prefix begins with a letter or a digit"],
+  ["il2_cpp-v0.8.1", "0.8.1", "an underscore is not in a prefix"],
+  ["il2+cpp-v0.8.1", "0.8.1", "a plus is not in a prefix"],
+  ["vv0.8.1", "0.8.1", "one v, not two"],
+  ["V0.8.1", "0.8.1", "the v is lowercase"],
+  ["il2cpp-V0.8.1", "0.8.1", "the v is lowercase"],
+  ["il2cpp_v0.8.1", "0.8.1", "the separator is a hyphen"],
+  ["il2cppv0.8.1", "0.8.1", "the separator is a hyphen"],
+  ["v0.8.1-extra", "0.8.1", "a suffix is another version"],
+  ["il2cpp-v0.8.1-extra", "0.8.1", "a suffix is another version"],
+  ["v0.1.0-discovery", "0.1.0", "a prerelease is not its release"],
+  ["v0.8.1", "0.8.10", "equality, not a prefix match"],
+  ["v0.8.10", "0.8.1", "equality, not a prefix match"],
+  ["v00.8.1", "0.8.1", "no semver normalisation"],
+  ["v0.8.1", "0.8.1+build", "no semver normalisation"],
+  ["x-v", "", "an empty version is named by nothing"],
+  ["v", "", "an empty version is named by nothing"],
+  ["", "", "an empty version is named by nothing"],
+  ["x-v", "0.1.0", "no version in the tag"],
+  ["release", "0.8.1", "no version in the tag"],
+  ["undefined", undefined, "a version that is not a string"],
+  ["v1", 1, "a version that is not a string"],
+  [null, "0.8.1", "no tag"],
+];
+
+for (const [tag, version] of TAG_NAMES) {
+  test(`tag ${tag} names version ${version}`, () => {
+    assert.equal(tagNamesVersion(tag, version), true);
+  });
+}
+
+for (const [tag, version, why] of TAG_DOES_NOT_NAME) {
+  test(`tag ${JSON.stringify(tag)} does not name version ${JSON.stringify(version)}: ${why}`, () => {
+    assert.equal(tagNamesVersion(tag, version), false);
+  });
+}
+
+test("manifestFindings: a prefixed tag that names the version is no finding, and a mismatch says the three forms", () => {
+  const m = load(vectors.manifests.valid[0].file);
+  const withVersion = (version) => ({ ...m, integration: { ...m.integration, version } });
+  const mismatch = (tag, version) =>
+    manifestFindings(withVersion(version), { reserved, firstParty: true, tag }).filter((f) => f.code === CODES.E_VERSION_TAG_MISMATCH);
+  for (const [tag, version] of TAG_NAMES) assert.deepEqual(mismatch(tag, version), [], `${tag} names ${version}`);
+  for (const [tag, version] of TAG_DOES_NOT_NAME.filter(([t, v]) => typeof t === "string" && typeof v === "string")) {
+    assert.equal(mismatch(tag, version).length, 1, `${tag} does not name ${JSON.stringify(version)}`);
+  }
+  const [f] = mismatch("il2cpp-0.8.1", "0.8.1");
+  assert.match(f.message, /version is "0\.8\.1" and the release tag il2cpp-0\.8\.1 does not name it/);
+  assert.match(f.message, /as V, vV or <prefix>-vV/);
+  assert.deepEqual(mismatch(null, "0.8.1"), [], "no tag, no check (the goldens are checked without a release)");
 });

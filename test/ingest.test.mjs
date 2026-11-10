@@ -318,6 +318,41 @@ test("the version must be the tag's", async () => {
   assert.ok(codes(c).includes("E_VERSION_TAG_MISMATCH"));
 });
 
+// A repository that holds several integrations releases each under its own
+// prefixed tag (il2cpp-v0.8.1). The whole of ingest has to carry such a tag:
+// the release lookup, the peel, the certificate's ref and the stored entry.
+function prefixedRelease(tag) {
+  const zip = stagingZip();
+  const refs = structuredClone(fixture("refs.json"));
+  refs.ref.ref = `refs/tags/${tag}`;
+  const cert = fixture("attestation.json")[0].verificationResult.signature.certificate;
+  return {
+    zip,
+    github: fakeGithub({ zip, release: { ...fixture("release.json"), tag_name: tag }, refs }),
+    certificate: {
+      buildSignerURI: cert.buildSignerURI.replace("refs/tags/v1.0.0", `refs/tags/${tag}`),
+      sourceRepositoryRef: `refs/tags/${tag}`,
+    },
+    request: { ...REQUEST, tag },
+  };
+}
+
+test("a prefixed release tag that names the version is listed under that tag", async () => {
+  const c = await run(prefixedRelease("csharp-v1.0.0"));
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(c.entry.version, "1.0.0");
+  assert.equal(c.entry.source.release_tag, "csharp-v1.0.0");
+  assert.deepEqual(c.request, { lease_id: "lease-1", repo_id: 900000001, tag: "csharp-v1.0.0" });
+});
+
+for (const tag of ["csharp-1.0.0", "csharp-v1.0.1", "CSharp-v1.0.0", "csharp--v1.0.0", "v1.0.0-csharp"]) {
+  test(`release tag ${tag} does not name version 1.0.0 and is refused`, async () => {
+    const c = await run(prefixedRelease(tag));
+    assert.deepEqual(codes(c).filter((x) => x.startsWith("E_")), ["E_VERSION_TAG_MISMATCH"], JSON.stringify(c.findings));
+    assert.equal(c.verdict, "refuse");
+  });
+}
+
 // ── content parts (manifest.md §2.7, merged plan §5.4) ──────────────────
 
 const CONTENT_PNG = Buffer.from("89504e470d0a1a0a0000000000000000", "hex");
