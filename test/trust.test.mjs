@@ -318,8 +318,10 @@ test("the ledger written before this change still reads, and a malformed one ref
     assert.throws(() => selectSigner({ env: { GAMES_SIGNING_KEY_CURRENT: c.current.seedB64 }, floors: { spent }, kindKeys: c.kindKeys, now: T0, schema: WITHDRAWN_SCHEMA }), /E_KEY_RETIRED/,
       "a bare id still spends the listed key of that id");
   }
-  // a run under N reads the old ledger and records A's public key beside its id ...
-  writeJson(path.join(c.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0, spent: { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [] } });
+  // a run under N reads the old ledger and records A's public key beside its id
+  // (a ledger is written by a run that signed: the floors and dist/ of that run are beside it) ...
+  c.sign();
+  writeJson(path.join(c.data, "floors.json"), { ...c.state("floors.json"), spent: { [INDEX_SCHEMA]: [SPENT_A], [WITHDRAWN_SCHEMA]: [] } });
   c.sign();
   assert.deepEqual(c.state("floors.json").spent, { [INDEX_SCHEMA]: [spentA(c)], [WITHDRAWN_SCHEMA]: [spentA(c)] });
   // ... so after the ceremony the bridge holds

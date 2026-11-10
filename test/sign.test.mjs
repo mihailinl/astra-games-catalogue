@@ -448,15 +448,15 @@ test("a previous list that is missing after a signing, unreadable, unsigned or n
   const c = revoked();
   const kept = fs.readFileSync(distFile(c), "utf8");
   fs.rmSync(distFile(c));
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole(`is missing, and this is not a first run: floors\\.json records signed documents \\(index ${T0 + 1}, withdrawn ${T0 + 1}\\), dist/ holds a signed index, 1 applied act is recorded`));
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole(`is missing, and this is not a first run: floors\\.json records signed documents \\(index ${T0 + 1}, withdrawn ${T0 + 1}\\), dist/ holds a signed index, 1 applied act is recorded, entries\\.json lists 1 accepted release, withdrawn\\.json keeps 1 spent takedown unit`));
   fs.rmSync(path.join(c.data, "dist", "games-index.json"));
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: floors\\.json records signed documents .*, 1 applied act is recorded"));
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: floors\\.json records signed documents .*, 1 applied act is recorded, entries\\.json lists 1 accepted release, withdrawn\\.json keeps 1 spent takedown unit"));
   fs.rmSync(path.join(c.data, "acts"), { recursive: true });
-  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: floors\\.json records signed documents \\(.*\\)"));
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: floors\\.json records signed documents \\([^)]*\\), entries\\.json lists 1 accepted release, withdrawn\\.json keeps 1 spent takedown unit"));
   const onlyActs = revoked();
   fs.rmSync(path.join(onlyActs.data, "dist"), { recursive: true });
   writeJson(path.join(onlyActs.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0 });
-  refusedUnchanged(onlyActs, () => onlyActs.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: 1 applied act is recorded"));
+  refusedUnchanged(onlyActs, () => onlyActs.sign({ now: T0 + DAY }), whole("is missing, and this is not a first run: 1 applied act is recorded, entries\\.json lists 1 accepted release, withdrawn\\.json keeps 1 spent takedown unit"));
   const onlyIndex = makeCatalogue();
   onlyIndex.sign();
   fs.rmSync(distFile(onlyIndex));
@@ -494,6 +494,27 @@ test("a previous list that is missing after a signing, unreadable, unsigned or n
   fs.writeFileSync(distFile(f), before);
   editState(f, (w) => { w.rows = []; });
   refusedUnchanged(f, () => f.sign({ now: T0 + DAY }), whole(`is serial ${T0} and floors\\.json says the last list signed is ${T0 + 1}: one of the two is not from the last run`));
+});
+
+test("dist/ lost together with floors.json and acts/ is still not a first run: what a signing run wrote beside them says so", () => {
+  const PREVIOUS = "^Error: E_STATE_PREVIOUS: dist/games-withdrawn\\.json is missing, and this is not a first run: ";
+  const lose = (c, ...what) => { for (const f of ["dist", "floors.json", ...what]) fs.rmSync(path.join(c.data, f), { recursive: true, force: true }); };
+  // the row dropped too, as a state lost and rebuilt would have it: the list it would sign is the one this guards against
+  const c = revoked();
+  lose(c, "acts");
+  editState(c, (w) => { w.rows = []; });
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`${PREVIOUS}entries\\.json lists 1 accepted release, withdrawn\\.json keeps 1 spent takedown unit; `));
+  // with no release accepted, a lift is a trace, and a held takedown, and a spent key
+  const d = makeCatalogue();
+  d.sign();
+  editState(d, (w) => { w.lifts = youngLifts(2); w.held = [{ ref: "act-h" }]; });
+  writeJson(path.join(d.data, "floors.json"), { kind: "games", index: 0, withdrawn: 0, spent: { [INDEX_SCHEMA]: [{ key_id: "astra-games-2025z", public_key: throwawayKey().publicB64 }], [WITHDRAWN_SCHEMA]: [] } });
+  fs.rmSync(path.join(d.data, "dist"), { recursive: true });
+  refusedUnchanged(d, () => d.sign({ now: T0 + DAY }), new RegExp(`${PREVIOUS}floors\\.json records 1 spent key, withdrawn\\.json keeps 2 lifts, 1 held takedown; `));
+  // and with every trace gone the data directory is a new catalogue's: it signs
+  lose(d, "acts", "withdrawn.json");
+  d.sign({ now: T0 + DAY });
+  assert.deepEqual(listOf(d).rows, []);
 });
 
 test("the previous list verifies under the keys this signer signed lists with: trust.json's two, and a key floors.json records as spent for the list", () => {
