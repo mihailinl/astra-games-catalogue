@@ -225,6 +225,18 @@ pulls every pending act, oldest first:
 | `M_SET_RECOMMENDED_FOUNDATION` | `code`, `entry_id` (or null) |
 | `M_PROMOTE` | `entry_id`, `version` of a first-party prerelease |
 | `M_RELEASE_HOLD` | `hold_id` (`<repo_id>@<tag>`), `decision: accept\|refuse` |
+| `M_LIFT` | `repo_id`, `versions`, `entry_id` (only when the row has one) and `lifts_at` (the row's `at`): the withdrawal row to lift, each exactly as the row carries it; `reason_text` |
+
+**A lift** (`M_LIFT`, `games-withdrawn-v1.md` §2.2) is the only thing that ends
+a `revoke` for `security` on a client that has seen it: such a row stays in
+force there even when the list stops carrying it. The act names one row by
+`repo_id`, `entry_id`, `versions` and `at`, byte for byte, and is refused with
+the member that matched nothing when no row is named. Every row it names
+leaves the list in that run (two only when one act wrote two for one subject,
+a cascade's banner and yank), and the lift is signed into `lifts`, where it
+stays: the list serves the newest 256. It lifts nothing else: the rows a
+revoke cascaded onto its dependants are lifted by their own acts. A lifted
+takedown still counts toward the 3-per-24-hours bound.
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
 both documents in its own run. An act is applied once per confirmation ref:

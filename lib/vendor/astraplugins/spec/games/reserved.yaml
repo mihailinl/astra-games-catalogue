@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 53b832785bcc20953f12d471ad1181092a75d774, path spec/games/reserved.yaml.
+# VENDORED from mihailinl/AstraPlugins at e7ff52ad0a01adf8ed9fde490a71ef0dbd338875, path spec/games/reserved.yaml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Game-integration reserved names and ids — the ONE list.
