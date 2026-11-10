@@ -232,8 +232,9 @@ a `revoke` for `security` on a client that has seen it: such a row stays in
 force there even when the list stops carrying it. The act names one row by
 `repo_id`, `entry_id`, `versions` and `at`, byte for byte, and is refused with
 the member that matched nothing when no row is named. Every row it names
-leaves the list in that run (two only when one act wrote two for one subject,
-a cascade's banner and yank), and the lift is signed into `lifts`, where it
+leaves the list in that run (more than one when rows share a subject and a
+second: a cascade's banner and yank, or two acts on one subject within a
+second), and the lift is signed into `lifts`, where it
 stays: the list serves the newest 256. It lifts nothing else: the rows a
 revoke cascaded onto its dependants are lifted by their own acts. A lifted
 takedown still counts toward the 3-per-24-hours bound.

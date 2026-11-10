@@ -441,6 +441,23 @@ test("M_LIFT lifts what it names and nothing else: a cascade's rows stay, and it
   assert.deepEqual(verified(c), [[], []]);
 });
 
+test("M_LIFT: two separate acts on one subject within one second are one lift's rows, and both leave", () => {
+  // found by the ops local stand: a revoke and a delist of one entry, both `*`, landed in the same second
+  const c = seeded();
+  c.sign({ acts: [act("M_REVOKE", { repo_id: GI.repo_id, versions: "*", reason_code: "security" }), act("M_DELIST", { repo_id: GI.repo_id, versions: "*", reason_code: "policy" })] });
+  assert.deepEqual(withdrawnOf(c).rows.map((r) => r.act).sort(), ["delist", "revoke"]);
+  const r = c.sign({ acts: [lift({ versions: "*" })] });
+  assert.deepEqual(r.refusedActs, []);
+  assert.deepEqual(r.acts[0].summary.lifted, ["delist", "revoke"], "the run's record says what left");
+  assert.deepEqual(withdrawnOf(c).rows, [], "a client would match the lift to either, so neither may stay beside it");
+  assert.deepEqual(verified(c), [[], []]);
+  // a second later they are two subjects-in-time, and one lift names one
+  const d = seeded();
+  d.sign({ acts: [act("M_REVOKE", { repo_id: GI.repo_id, versions: "*", reason_code: "security" }), act("M_DELIST", { repo_id: GI.repo_id, versions: "*", reason_code: "policy" }, T0 + 1)] });
+  d.sign({ acts: [lift({ versions: "*" })] });
+  assert.deepEqual(withdrawnOf(d).rows.map((x) => [x.act, x.at]), [["delist", T0 + 1]]);
+});
+
 test("M_LIFT: a dependant revoked with its foundation stays revoked when the foundation's revoke is lifted", () => {
   const c = seeded();
   c.sign({ acts: [act("M_REVOKE", { repo_id: FOO.repo_id, versions: "*", reason_code: "security", reason_text: "Backdoored.", cascade: { revoke: ["third/built-on-foo"] } })] });
