@@ -577,6 +577,12 @@ test("the index beside the list is missing, unreadable, or of another serial: re
   const floors = c.state("floors.json");
   writeJson(path.join(c.data, "floors.json"), { ...floors, index: floors.index - 1 });
   refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`dist/games-index\\.json is serial ${T0 + 1}, floors\\.json says index ${T0} and withdrawn ${T0 + 1}`));
+  // the index and its floor agree with each other, and not with the list's
+  const env2 = JSON.parse(kept);
+  writeJson(index, { ...env2, signed: { ...env2.signed, serial: T0 + 2 } });
+  writeJson(path.join(c.data, "floors.json"), { ...floors, index: T0 + 2 });
+  refusedUnchanged(c, () => c.sign({ now: T0 + DAY }), new RegExp(`dist/games-index\\.json is serial ${T0 + 2}, floors\\.json says index ${T0 + 2} and withdrawn ${T0 + 1}`));
+  fs.writeFileSync(index, kept);
   writeJson(path.join(c.data, "floors.json"), floors);
   c.sign({ now: T0 + DAY });
 });
@@ -627,7 +633,7 @@ test("actsUnaccounted: a held revoke dropped by a lift is ended; a revoke still 
   const old = (o = {}) => rec(2, "M_LIFT", { ...SUBJECT, entry_id: undefined, lifts_at: T0, ...o }, { lifted: ["revoke"] });
   const kept = { lifts: [{ ...LIFT, sticky: true, applied_at: T0 }] };
   assert.deepEqual(actsUnaccounted({ ...state(kept), acts: [rv, old()] }, T0), []);
-  assert.equal(actsUnaccounted({ ...state(kept), acts: [rv, old({ lifts_at: T0 + 1 })] }, T0).length, 1);
+  assert.equal(actsUnaccounted({ ...state({ lifts: [{ ...LIFT, lifts_at: T0 + 1, sticky: true, applied_at: T0 }] }), acts: [rv, old({ lifts_at: T0 + 1 })] }, T0).length, 1, "a lift of the subject's row at another second, with its record");
   assert.equal(actsUnaccounted({ ...state(kept), acts: [rv, old({ versions: "*" })] }, T0).length, 1);
 });
 
