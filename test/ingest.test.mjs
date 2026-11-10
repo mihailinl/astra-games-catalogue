@@ -579,13 +579,81 @@ test("a community id with the first-party prefix is reserved", async () => {
   assert.ok(codes(c).includes("E_RESERVED_ID"));
 });
 
-test("an id another publisher lists is taken, and a look-alike is confusable", async () => {
-  const other = { entry: { id: "astra-staging-author/staging-csharp-gi", publisher: { account: "squatter", repo_id: 1, repo_owner_id: 2 } }, meta: {} };
+test("an entry id another publisher lists is taken, and a look-alike is confusable", async () => {
+  const other = { entry: { id: "astra-staging-author/staging-csharp-gi", publisher: { account: "squatter", repo_id: 1, repo_owner_id: 2 } }, meta: { manifest_id: "squatter.staging-csharp-gi" } };
   const a = await run({ state: emptyState({ entries: [other] }) });
   assert.ok(codes(a).includes("E_ID_TAKEN"));
-  const look = { entry: { id: "astra-staging-author/staging-csharp-g1", publisher: { account: "squatter", repo_id: 1, repo_owner_id: 2 } }, meta: {} };
+  const look = { entry: { id: "astra-staging-author/staging-csharp-g1", publisher: { account: "squatter", repo_id: 1, repo_owner_id: 2 } }, meta: { manifest_id: "squatter.staging-csharp-g1" } };
   const b = await run({ state: emptyState({ entries: [look] }) });
   assert.ok(codes(b).includes("E_ID_CONFUSABLE"));
+});
+
+// ── the manifest id is unique across the catalogue (spec/games/manifest.md §3) ──
+// The engine keys an integration's packages, inbox and games/<id>.json by
+// `[integration] id`, so the first REPOSITORY to list it holds it. The staging
+// release is astra-staging-author's repository 900000001, manifest id
+// "astra-staging-author.staging-csharp-gi".
+
+const STAGING_ID = "astra-staging-author.staging-csharp-gi";
+/** A stored release of `manifest_id` by `account`'s repository `repo_id`. */
+const holder = ({ account, repo_id, manifest_id = STAGING_ID, version = "0.0.1", status = "listed" }) => ({
+  entry: { id: `${account}/${manifest_id.replace(/\./g, "-")}`, version, publisher: { account, repo_id, repo_owner_id: 800000077 }, source: { repo_id } },
+  meta: { status, manifest_id },
+});
+/** The id findings that come from the manifest-id rule (not the entry-id rule). */
+const manifestIdFindings = (c) => c.findings.filter((f) => /^E_ID_/.test(f.code) && f.message.startsWith("[integration] id "));
+
+test("manifest id: another account's repository holds it -> E_ID_TAKEN naming the holder, though the entry ids differ", async () => {
+  const c = await run({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31 })] }) });
+  assert.equal(c.verdict, "refuse");
+  assert.deepEqual(manifestIdFindings(c).map((f) => f.code), ["E_ID_TAKEN"]);
+  assert.match(manifestIdFindings(c)[0].message, /held by bob's repository 31 \(bob\/astra-staging-author-staging-csharp-gi\)/);
+});
+
+test("manifest id: the same account's SECOND repository is another holder -> E_ID_TAKEN (compared by repo_id, not by account)", async () => {
+  const c = await run({ state: emptyState({ entries: [holder({ account: "astra-staging-author", repo_id: 900000777 })] }) });
+  assert.deepEqual(manifestIdFindings(c).map((f) => f.code), ["E_ID_TAKEN"]);
+  assert.equal(c.findings.filter((f) => /^E_ID_/.test(f.code)).length, 1, "one holder is named once, not again by the entry-id rule");
+});
+
+test("manifest id: the same repository's next version, and a renamed or transferred account, are no finding", async () => {
+  for (const account of ["astra-staging-author", "renamed-login"]) {
+    const c = await run({ state: emptyState({ entries: [holder({ account, repo_id: 900000001 })] }) });
+    assert.deepEqual(c.findings.filter((f) => /^E_ID_/.test(f.code)), [], account);
+  }
+});
+
+test("manifest id: a look-alike another repository holds -> E_ID_CONFUSABLE; a case-only difference is the same id -> E_ID_TAKEN", async () => {
+  const look = await run({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31, manifest_id: "astra-staging-author.staging-csharp-g1" })] }) });
+  assert.deepEqual(manifestIdFindings(look).map((f) => f.code), ["E_ID_CONFUSABLE"]);
+  const sep = await run({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31, manifest_id: "astra_staging_author.staging.csharp.gi" })] }) });
+  assert.deepEqual(manifestIdFindings(sep).map((f) => f.code), ["E_ID_CONFUSABLE"], "separators fold away");
+  const cased = await run({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31, manifest_id: "Astra-Staging-Author.Staging-CSharp-GI" })] }) });
+  assert.deepEqual(manifestIdFindings(cased).map((f) => f.code), ["E_ID_TAKEN"], "one file name on a Windows disk");
+});
+
+test("manifest id: a withdrawn, delisted or revoked holder still holds it -- its installs keep their data under that id", async () => {
+  for (const act of ["revoke", "delist", "yank"]) {
+    const state = emptyState({ entries: [holder({ account: "bob", repo_id: 31 })] });
+    state.withdrawn.rows.push({ repo_id: 31, versions: "*", act, reason_code: "security", at: 1793440000 });
+    const c = await run({ state });
+    assert.deepEqual(manifestIdFindings(c).map((f) => f.code), ["E_ID_TAKEN"], act);
+  }
+  const pre = await run({ state: emptyState({ entries: [holder({ account: "bob", repo_id: 31, status: "prerelease" })] }) });
+  assert.deepEqual(manifestIdFindings(pre).map((f) => f.code), ["E_ID_TAKEN"], "a prerelease holds it too");
+});
+
+test("manifest id: the astra. reserve still applies, and a first-party holder's id is taken for a community repository", async () => {
+  const m = fixtureText("astra-gi.toml").replace(STAGING_ID, "astra.peak");
+  const c = await run({ zip: stagingZip(m), state: emptyState({ entries: [holder({ account: "mihailinl", repo_id: 1409552680, manifest_id: "astra.peak" })] }) });
+  assert.ok(codes(c).includes("E_RESERVED_ID"));
+  assert.deepEqual(manifestIdFindings(c).map((f) => f.code), ["E_ID_TAKEN"]);
+});
+
+test("manifest id: a stored release without meta.manifest_id stops the run, never frees a name silently", async () => {
+  const bare = holder({ account: "bob", repo_id: 31 });
+  delete bare.meta.manifest_id;
+  await assert.rejects(run({ state: emptyState({ entries: [bare] }) }), /carries no meta\.manifest_id/);
 });
 
 // ── the lease: the pull model (lane C design §0 findings 1-3, §1.3, §1.6) ──
