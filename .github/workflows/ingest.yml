@@ -57,6 +57,12 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       GAMES_SERVICE_URL: ${{ vars.GAMES_SERVICE_URL }}
       GAMES_SERVICE_AUDIENCE: ${{ vars.GAMES_SERVICE_AUDIENCE }}
+      # "true" makes the register name the repositories GitHub answered for
+      # (`polled`), so the service settles a baseline only for those. Unset
+      # (off) until the service that reads the member is deployed: today's
+      # refuses a body with a member it does not know. Removed, with the
+      # switch in lib/service.mjs registerBody, once the service requires it.
+      GAMES_REGISTER_POLLED: ${{ vars.GAMES_REGISTER_POLLED }}
     steps:
       - name: Check out the catalogue's code (main)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

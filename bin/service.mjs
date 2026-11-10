@@ -28,8 +28,10 @@
 //       job AFTER both when an act was refused
 //
 // Environment: GAMES_SERVICE_URL, GAMES_SERVICE_AUDIENCE (repository
-// variables, optional), GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, and the runner's
-// ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN (the job's `id-token: write`).
+// variables, optional), GAMES_REGISTER_POLLED (repository variable; "true"
+// makes ingest-work's register name the repositories it polled, see
+// lib/service.mjs registerBody), GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, and the
+// runner's ACTIONS_ID_TOKEN_REQUEST_URL/_TOKEN (the job's `id-token: write`).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -37,7 +39,7 @@ import path from "node:path";
 import { githubApi } from "../lib/github.mjs";
 import { LEASE_ID } from "../lib/ingest.mjs";
 import {
-  ingestResultBody, isUnavailable, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, serviceClient, ServiceRefused, signResultBody, signUnnamed,
+  ingestResultBody, isUnavailable, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, registerBody, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { loadPolicy, writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
@@ -79,7 +81,11 @@ export async function ingestWork({ out, env = process.env, client = serviceClien
       const firstPartyIds = new Set((firstParty?.repos ?? []).map((r) => Number(r.repository_id)));
       const polled = await pollReleases({ repoIds: answer.poll, github, firstPartyIds });
       for (const id of polled.unanswered) log.warn(`poll: GitHub did not answer for repository ${id}; asked again next run`);
-      const reg = await client.releases({ run_id: runId, found: polled.found });
+      // Off (the default) the body is exactly {run_id, found}: today's service
+      // refuses a member it does not know. See registerBody for when it goes.
+      const register = registerBody({ runId, found: polled.found, polled: polled.polled, namePolled: env.GAMES_REGISTER_POLLED === "true" });
+      for (const f of register.dropped) log.log(`::warning::poll: ${f.repo_id} ${f.tag} was found in a repository this run did not poll; left out of the register`);
+      const reg = await client.releases(register.body);
       created = leaseRequests(Array.isArray(reg?.created) ? reg.created : []);
     }
     const seen = new Set();
