@@ -225,19 +225,43 @@ pulls every pending act, oldest first:
 | `M_SET_RECOMMENDED_FOUNDATION` | `code`, `entry_id` (or null) |
 | `M_PROMOTE` | `entry_id`, `version` of a first-party prerelease |
 | `M_RELEASE_HOLD` | `hold_id` (`<repo_id>@<tag>`), `decision: accept\|refuse` |
-| `M_LIFT` | `repo_id`, `versions`, `entry_id` (only when the row has one) and `lifts_at` (the row's `at`): the withdrawal row to lift, each exactly as the row carries it; `reason_text` |
+| `M_LIFT` | `repo_id`, `versions`, `entry_id` (only when the row has one) and `lifts_at` (the row's `at`): the withdrawal row to lift; `reason_text` |
 
 **A lift** (`M_LIFT`, `games-withdrawn-v1.md` §2.2) is the only thing that ends
 a `revoke` for `security` on a client that has seen it: such a row stays in
-force there even when the list stops carrying it. The act names one row by
-`repo_id`, `entry_id`, `versions` and `at`, byte for byte, and is refused with
-the member that matched nothing when no row is named. Every row it names
-leaves the list in that run (more than one when rows share a subject and a
-second: a cascade's banner and yank, or two acts on one subject within a
-second), and the lift is signed into `lifts`, where it
-stays: the list serves the newest 256. It lifts nothing else: the rows a
-revoke cascaded onto its dependants are lifted by their own acts. A lifted
-takedown still counts toward the 3-per-24-hours bound.
+force there even when the list stops carrying it. The act names a row by its
+subject (`repo_id`, `entry_id`, `versions`) and its `at`, and is refused with
+the member that matched nothing when it names none. What the signer holds:
+
+- **One reading of a subject, the client's** (`lib/model.mjs`): `entry_id`
+  trimmed and lowercased, none equal to none only, `versions` byte for byte.
+  Every comparison of two subjects uses it. An act whose `entry_id` a client
+  could not read (empty once trimmed, a control character), or that holds a
+  non-ASCII character not already lowercase, is refused, for a lift and for a
+  withdrawal alike.
+- **One act per subject and second.** A lift carries no act, so it names every
+  row of its subject and second. A row that would share both with another
+  act's row, with a held takedown or with a kept lift takes the first free
+  second after its act's `at`; the act's summary says the row's `at`. So one
+  lift lifts what one act wrote (one row, or a cascade's banner and yank), and
+  a row never lands on a lift. `lifts_at` is therefore the row's `at` from the
+  served list, not the act's.
+- **The row leaves and the lift stays**, in that run. The list holds at most
+  256 lifts; when it is full a lift of a row that was not sticky leaves first,
+  then a security lift older than 365 days, and otherwise a new security lift
+  is refused.
+- **A held takedown** it names is dropped and no lift is written (no client
+  saw it). When a foundation's revoke is lifted, the cascade takedowns of it
+  that are still held go too; published dependants' rows keep their own lifts.
+- **Bounds.** `lifts_at` ≤ `at` ≤ the signer's clock plus 300 seconds. At most
+  3 lifts of security revokes in 24 hours, the fourth refused. The takedown
+  bound counts by when the signer applies an act (`withdrawn.json` `spent`),
+  not by the act's own `at`, and a lifted takedown stays counted.
+- **Its own list.** Before signing, and after every act on a copy of the
+  state, the signer checks `lift-not-contradicted`, `one-act-per-second` and
+  `entry-id-readable`. An act that would break one is refused with that
+  reason and the run goes on; it is never applied and then left to fail the
+  run.
 
 Every act is recorded as `acts/<seq>.json` on `data`, and every act re-signs
 both documents in its own run. An act is applied once per confirmation ref:
