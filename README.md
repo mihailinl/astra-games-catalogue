@@ -198,6 +198,14 @@ The service's base URL is the repository variable `GAMES_SERVICE_URL`
 (default `https://api.minice.ai/plugins/v1`; `GAMES_SERVICE_AUDIENCE`
 overrides the OIDC audience for a staging service).
 
+With the repository variable `GAMES_REGISTER_POLLED` set to `true`, the
+register also names the repositories GitHub answered for (`polled`, a 404
+included), and the service settles a baseline only for those: a repository
+GitHub did not answer for is read again next run instead of having its
+existing tags taken for new releases. It is off by default, because a
+service that does not know the member refuses the body; it is set once the
+service reads it, and removed once the service requires it.
+
 ## Moderator acts
 
 A moderator acts on the site, with one console 2FA per act; the plugins

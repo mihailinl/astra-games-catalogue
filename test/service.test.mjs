@@ -14,7 +14,7 @@ import { ingestReport, ingestWork, MAX_RUN_LEASES, signReport, signWork } from "
 import { readCandidates, readWorkFiles } from "../bin/sign.mjs";
 import {
   clipBytes, DEFAULT_AUDIENCE, DEFAULT_BASE, ingestResultBody, MAX_ACCEPTED, MAX_PARTS, MAX_PROBLEM_BYTES, MAX_PROBLEMS, MAX_RESULT_ACTS, MAX_WORK_ACTS,
-  oidcToken, projectCandidate, readWork, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
+  oidcToken, pollReleases, projectCandidate, readWork, registerBody, serviceBase, serviceClient, ServiceRefused, signResultBody, signUnnamed,
 } from "../lib/service.mjs";
 import { tmpdir } from "./helpers.mjs";
 
@@ -115,6 +115,121 @@ test("ingest-work: polls the named repositories and registers what it found; the
     { repo_id: 1409552680, tag: "v1.0.0" },
   ], "no draft; a prerelease only from a first-party repository; a repository GitHub did not answer is left out");
   assert.deepEqual(r.leases, ["P0", "P1", "P2"]);
+});
+
+// ── the register names what it polled ─────────────────────────────────────
+// The service settles a baseline for every repository of a register. A
+// repository GitHub did not answer for is absent from `found` and was
+// settled all the same, so its existing tags were later taken for new
+// releases. `polled` names the repositories that were actually read; it is
+// sent only under GAMES_REGISTER_POLLED until the service reads it.
+
+/** A GitHub whose answer per repository id is `by[id]`: a list of tags, 404, or anything else (unanswered). */
+const pollGithub = (by) => ({
+  calls: [],
+  async releases(id) {
+    this.calls.push(id);
+    const a = by[id];
+    if (Array.isArray(a)) return { status: "found", releases: a.map((tag_name) => ({ tag_name })) };
+    if (a === 404) return { status: "not_found", reason: "HTTP 404" };
+    return { status: "transient", reason: "HTTP 502" };
+  },
+});
+const registerOf = (service) => service.calls.find(([n]) => n === "releases")[1];
+const POLL_ANSWERS = { 11: ["v1.0.0"], 22: 404, 33: 502, 44: ["v2.1.0", "v2.0.0"], 55: [] };
+
+test("ingest-work: with GAMES_REGISTER_POLLED off (unset, empty, or anything but exactly \"true\") the register is exactly {run_id, found}, no `polled`", async () => {
+  for (const extra of [{}, { GAMES_REGISTER_POLLED: "" }, { GAMES_REGISTER_POLLED: "false" }, { GAMES_REGISTER_POLLED: "1" }, { GAMES_REGISTER_POLLED: "TRUE" }, { GAMES_REGISTER_POLLED: " true" }]) {
+    const dir = tmpdir();
+    const service = fakeService({ leases: { items: [], poll: [11, 22, 33, 44, 55] }, releases: { created: [] } });
+    await ingestWork({ out: path.join(dir, "req"), env: ENV(dir, extra), client: service, github: pollGithub(POLL_ANSWERS), log: quiet });
+    assert.deepEqual(registerOf(service), {
+      run_id: 4242,
+      found: [{ repo_id: 11, tag: "v1.0.0" }, { repo_id: 44, tag: "v2.1.0" }, { repo_id: 44, tag: "v2.0.0" }],
+    }, `GAMES_REGISTER_POLLED=${JSON.stringify(extra.GAMES_REGISTER_POLLED)}: a service that reads the body strictly refuses any other member`);
+    assert.deepEqual(Object.keys(registerOf(service)), ["run_id", "found"]);
+  }
+});
+
+test("ingest-work: with GAMES_REGISTER_POLLED=true the register names the repositories GitHub answered for -- a 404 and an empty one included, an unanswered one never -- and `found` comes only from those", async () => {
+  const dir = tmpdir();
+  const warned = [];
+  const log = { ...quiet, warn: (m) => warned.push(m) };
+  const service = fakeService({ leases: { items: [], poll: [11, 22, 33, 44, 55] }, releases: { created: [] } });
+  const github = pollGithub(POLL_ANSWERS);
+  await ingestWork({ out: path.join(dir, "req"), env: ENV(dir, { GAMES_REGISTER_POLLED: "true" }), client: service, github, log });
+  const reg = registerOf(service);
+  assert.deepEqual(Object.keys(reg), ["run_id", "found", "polled"]);
+  assert.equal(reg.run_id, 4242);
+  assert.deepEqual(reg.polled, [11, 22, 44, 55], "in the grant's order: found, 404 (an answer: no such repository), found, found-but-empty; 33 (HTTP 502) was not read");
+  assert.ok(!reg.polled.includes(33), "an unanswered repository is never named: naming it settles a baseline nobody read");
+  assert.ok(reg.polled.includes(22), "a 404 is an answer");
+  assert.deepEqual(reg.found, [{ repo_id: 11, tag: "v1.0.0" }, { repo_id: 44, tag: "v2.1.0" }, { repo_id: 44, tag: "v2.0.0" }]);
+  for (const f of reg.found) assert.ok(reg.polled.includes(f.repo_id), `found ${f.repo_id} ${f.tag} is from a repository not in polled`);
+  assert.deepEqual(github.calls, [11, 22, 33, 44, 55]);
+  assert.deepEqual(warned.filter((m) => /did not answer/.test(m)).length, 1, "the unanswered repository is still warned about");
+  assert.match(warned[0], /repository 33/);
+});
+
+test("ingest-work: a repository the grant's `poll` names twice is polled once and named once; an id that is not a positive safe integer is never polled nor named", async () => {
+  const dir = tmpdir();
+  const service = fakeService({
+    leases: { items: [], poll: [44, 11, 44, "11", 0, -5, 1.5, "x", null, 2 ** 53, 22, 22] },
+    releases: { created: [] },
+  });
+  const github = pollGithub(POLL_ANSWERS);
+  await ingestWork({ out: path.join(dir, "req"), env: ENV(dir, { GAMES_REGISTER_POLLED: "true" }), client: service, github, log: quiet });
+  const reg = registerOf(service);
+  assert.deepEqual(github.calls, [44, 11, 22], "each repository asked once, in the grant's order; nothing that is not a repository id");
+  assert.deepEqual(reg.polled, [44, 11, 22]);
+  assert.deepEqual(reg.found, [{ repo_id: 44, tag: "v2.1.0" }, { repo_id: 44, tag: "v2.0.0" }, { repo_id: 11, tag: "v1.0.0" }]);
+});
+
+test("ingest-work: a run in which GitHub answered for no repository still registers, with `polled: []` and `found: []` -- nothing is settled", async () => {
+  const dir = tmpdir();
+  const service = fakeService({ leases: { items: [], poll: [33, 66, 77] }, releases: { created: [] } });
+  const r = await ingestWork({ out: path.join(dir, "req"), env: ENV(dir, { GAMES_REGISTER_POLLED: "true" }), client: service, github: pollGithub(POLL_ANSWERS), log: quiet });
+  assert.deepEqual(registerOf(service), { run_id: 4242, found: [], polled: [] });
+  assert.deepEqual(r.leases, []);
+});
+
+test("pollReleases: every found item's repository is in `polled`; `polled` is distinct positive integers out of the grant, in its order, never an unanswered one -- for every mix of answers", async () => {
+  // every assignment of {found, found-empty, 404, unanswered} to 4 repositories, the last named twice
+  const kinds = [["v1"], [], 404, 502];
+  for (let n = 0; n < kinds.length ** 4; n++) {
+    const ids = [101, 202, 303, 404];
+    const by = Object.fromEntries(ids.map((id, i) => [id, kinds[Math.floor(n / kinds.length ** i) % kinds.length]]));
+    const grant = [...ids, 404];
+    const r = await pollReleases({ repoIds: grant, github: pollGithub(by) });
+    const answered = ids.filter((id) => by[id] !== 502);
+    assert.deepEqual(r.polled, answered, `answers ${JSON.stringify(by)}`);
+    assert.equal(new Set(r.polled).size, r.polled.length, "distinct");
+    assert.ok(r.polled.length <= grant.length);
+    for (const id of r.polled) assert.ok(typeof id === "number" && Number.isSafeInteger(id) && id > 0 && grant.includes(id));
+    for (const id of r.unanswered) assert.ok(!r.polled.includes(id), `${id} is both unanswered and polled`);
+    assert.deepEqual([...new Set(r.unanswered)], ids.filter((id) => by[id] === 502));
+    for (const f of r.found) assert.ok(r.polled.includes(f.repo_id), `found ${f.repo_id} is not in polled`);
+    // and so the register drops nothing
+    assert.deepEqual(registerBody({ runId: 1, found: r.found, polled: r.polled, namePolled: true }).dropped, []);
+  }
+});
+
+test("registerBody: a found item from a repository that is not in `polled` is dropped (the service would refuse the whole register `invalid`) and handed back; with the switch off nothing is touched", () => {
+  const found = [{ repo_id: 11, tag: "v1" }, { repo_id: 99, tag: "v9" }, { repo_id: 44, tag: "v2" }];
+  const on = registerBody({ runId: 7, found, polled: [11, 44, 44], namePolled: true });
+  assert.deepEqual(on.body, { run_id: 7, found: [{ repo_id: 11, tag: "v1" }, { repo_id: 44, tag: "v2" }], polled: [11, 44] });
+  assert.deepEqual(on.dropped, [{ repo_id: 99, tag: "v9" }]);
+  const off = registerBody({ runId: 7, found, polled: [11, 44], namePolled: false });
+  assert.deepEqual(off.body, { run_id: 7, found });
+  assert.deepEqual(off.dropped, []);
+});
+
+test("ingest.yml's work job hands the switch to the script: GAMES_REGISTER_POLLED from the repository variable, and nowhere a literal `true`", () => {
+  const yml = fs.readFileSync(new URL("../.github/workflows/ingest.yml", import.meta.url), "utf8");
+  const work = yml.slice(yml.indexOf("\n  work:"), yml.indexOf("\n  ingest:"));
+  const lines = work.split("\n").filter((l) => /^\s*GAMES_REGISTER_POLLED:/.test(l));
+  assert.deepEqual(lines.map((l) => l.trim()), ["GAMES_REGISTER_POLLED: ${{ vars.GAMES_REGISTER_POLLED }}"], "off unless the variable says so");
+  assert.match(fs.readFileSync(new URL("../bin/service.mjs", import.meta.url), "utf8"), /env\.GAMES_REGISTER_POLLED === "true"/);
 });
 
 // ── BOT-?: `unavailable` is a retry, not a failure (surfaces closed, a
