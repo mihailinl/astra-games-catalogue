@@ -493,6 +493,42 @@ test("engine-code-reserved: a built-in code is refused", async () => {
   assert.ok(codes(c).includes("E_ENGINE_CODE_RESERVED"), JSON.stringify(c.findings));
 });
 
+// ── the licence (the registry's policy/spdx-allowlist.json, vendored) ────
+//
+// The allowlist matches the manifest's WHOLE licence string: an expression
+// is allowed when it is listed, never because its operands are. astra-reshade
+// and astra-in-death-stranding declare the first one below; until the pin
+// moved to astra-registry #498 every release of both was refused.
+
+const withLicence = (licence) => stagingZip(fixtureText("astra-gi.toml").replace('license = "MIT"', `license = "${licence}"`));
+
+test("the licence expression MIT AND BSD-3-Clause AND CC0-1.0 is on the allowlist and is listed", async () => {
+  const c = await run({ zip: withLicence("MIT AND BSD-3-Clause AND CC0-1.0") });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.ok(!codes(c).includes("E_LICENCE_NOT_ALLOWED"));
+});
+
+for (const licence of ["MIT AND BSD-3-Clause", "BSD-3-Clause AND MIT AND CC0-1.0", "MIT AND BSD-3-Clause AND CC0-1.0 ", "mit and bsd-3-clause and cc0-1.0", "MIT AND BSD-3-Clause AND CC0-1.0 AND LicenseRef-Proprietary"]) {
+  test(`the licence expression ${JSON.stringify(licence)} is not the listed one and is refused`, async () => {
+    const c = await run({ zip: withLicence(licence) });
+    assert.deepEqual(codes(c).filter((x) => x.startsWith("E_")), ["E_LICENCE_NOT_ALLOWED"], JSON.stringify(c.findings));
+  });
+}
+
+test("first-party.json: every pin names a listed repository, a plain tag, astra-gi.zip and a sha256, once", () => {
+  const ids = new Set(firstParty.repos.map((r) => r.repository_id));
+  const seen = new Set();
+  for (const p of firstParty.pins) {
+    assert.ok(ids.has(p.repository_id), `pin ${p.tag}: repository ${p.repository_id} is not in repos[]`);
+    assert.match(p.tag, /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/);
+    assert.equal(p.asset, "astra-gi.zip");
+    assert.match(p.sha256, /^[0-9a-f]{64}$/);
+    const k = `${p.repository_id}@${p.tag}`;
+    assert.ok(!seen.has(k), `${k} is pinned twice`);
+    seen.add(k);
+  }
+});
+
 // ── first-party by digest pin (merged §5.1) ─────────────────────────────
 
 function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml").replace("astra-staging-author.staging-csharp-gi", "astra.peak").replace("Staging C# test integration", "Astra in PEAK")), prerelease = false, probe = fakeProbe() } = {}) {
