@@ -3,9 +3,10 @@
 # Copyright (C) 2026 Minice — https://minice.ai
 #
 # Commit the data checkout and push it to `data` with the repository's write
-# deploy key — the only actor the ruleset "data is append-only" lets update
-# `data` (the GitHub Actions app cannot be a bypass actor on a repository a
-# person owns). sign.yml and resign.yml call this; GITHUB_TOKEN stays
+# deploy key — the only actor the ruleset "data: only the deploy key updates
+# it" lets move `data` (the GitHub Actions app cannot be a bypass actor on a
+# repository a person owns); "data is append-only" still holds it to
+# fast-forwards. sign.yml and resign.yml call this; GITHUB_TOKEN stays
 # read-only, so nothing else in a run can write to the repository at all.
 #
 #   bin/push-data.sh <data checkout> <commit message>
