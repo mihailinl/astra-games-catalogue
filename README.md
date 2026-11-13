@@ -342,10 +342,15 @@ the member that matched nothing when it names none. What the signer holds:
   young security lift not sticky, or old, is refused against `acts/`. What
   the data cannot show is the whole `data` branch, `acts/` included,
   replaced at once by an older one or by nothing. GitHub refuses that: the
-  ruleset **"data is append-only"** (id 26959655: `non_fast_forward` and
-  `deletion` on `refs/heads/data`, no bypass actors) admits only
-  fast-forward pushes, which is all `sign.yml` and `resign.yml` make. Rolling
-  `data` back needs an admin to edit or disable that ruleset first. Check it
+  ruleset **"data is append-only"** (id 26959655: `non_fast_forward`,
+  `deletion` and `update` on `refs/heads/data`, one bypass actor: the
+  repository's write deploy key) admits only fast-forward pushes, and only
+  with that key. `sign.yml` and `resign.yml` push through `bin/push-data.sh`
+  with the key (secret `GAMES_DATA_DEPLOY_KEY`, environment `publish-games`);
+  their `GITHUB_TOKEN` is read-only. The GitHub Actions app cannot be a bypass
+  actor on a repository a person owns, which is why it is a key. A push from a
+  person's own account is refused. Rolling `data` back needs an admin to edit
+  or disable that ruleset first. Check it
   with `gh api repos/mihailinl/astra-games-catalogue/rulesets` (the ruleset
   is listed, `enforcement: active`) and
   `gh api repos/mihailinl/astra-games-catalogue/rulesets/26959655`. An
