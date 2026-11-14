@@ -345,7 +345,21 @@ the member that matched nothing when it names none. What the signer holds:
   ruleset **"data is append-only"** (id 26959655: `non_fast_forward` and
   `deletion` on `refs/heads/data`, no bypass actors) admits only
   fast-forward pushes, which is all `sign.yml` and `resign.yml` make. Rolling
-  `data` back needs an admin to edit or disable that ruleset first. Check it
+  `data` back needs an admin to edit or disable that ruleset first. A second
+  ruleset, **"data: only the deploy key updates it"** (`update` on
+  `refs/heads/data`, bypass: deploy keys), means only the repository's write
+  deploy key moves `data` at all: `sign.yml` and `resign.yml` push through
+  `bin/push-data.sh` with it (secret `GAMES_DATA_DEPLOY_KEY`, environment
+  `publish-games`), their `GITHUB_TOKEN` is read-only, and a push from a
+  person's own account is refused. The two are separate on purpose: a bypass
+  actor skips every rule of its ruleset, so the key's exception must not sit
+  beside the fast-forward rule. The bypass names deploy keys as a class, so
+  every write deploy key added later passes it too: keep that key the only
+  one. A key could still write elsewhere, so **"outside data: only
+  repository admins write"** (branches except `data`) and **"tags: only
+  repository admins write"** restrict creating, moving and deleting refs to
+  the Repository admin role. The GitHub Actions app cannot be a bypass actor
+  on a repository a person owns, which is why CI holds a key. Check it
   with `gh api repos/mihailinl/astra-games-catalogue/rulesets` (the ruleset
   is listed, `enforcement: active`) and
   `gh api repos/mihailinl/astra-games-catalogue/rulesets/26959655`. An

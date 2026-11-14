@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 15
     environment: publish-games
     permissions:
-      contents: write   # push the data branch
+      contents: read    # `data` is pushed with the deploy key (bin/push-data.sh), never GITHUB_TOKEN
     steps:
       - name: Check out the catalogue's code (main)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +45,7 @@ jobs:
         with:
           ref: data
           path: catalogue-data
+          persist-credentials: false
 
       - name: Check out the published trust.json (astra-registry; verified under the compiled roots)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,11 +72,7 @@ jobs:
         env:
           ISSUED_AT: ${{ steps.sign.outputs.issued_at }}
           KEY_ID: ${{ steps.sign.outputs.key_id }}
+          GAMES_DATA_DEPLOY_KEY: ${{ secrets.GAMES_DATA_DEPLOY_KEY }}
         run: |
           set -euo pipefail
-          cd catalogue-data
-          git config user.name "astra-games-catalogue"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "resign: issued_at $ISSUED_AT under $KEY_ID"
-          git push -q origin HEAD:data
+          bin/push-data.sh catalogue-data "resign: issued_at $ISSUED_AT under $KEY_ID"

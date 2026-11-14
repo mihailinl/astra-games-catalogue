@@ -17,6 +17,9 @@
 //   - no `${{ … }}` expression inside any `run:` script — values reach a
 //     script through `env:`, so nothing a dispatcher, a fork or a release
 //     author wrote can become shell.
+//   - `data` is pushed ONLY by bin/push-data.sh with the write deploy key
+//     (GAMES_DATA_DEPLOY_KEY, publish-games): no job writes with GITHUB_TOKEN
+//     and no checkout keeps that token on disk.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -133,6 +136,40 @@ test("the signing secrets are named only in sign.yml and resign.yml, inside the 
   }
 });
 
+test("`data` is pushed only with the deploy key, from the publish-games job, and never with GITHUB_TOKEN", () => {
+  // The ruleset "data is append-only" restricts updates of `data` to its one
+  // bypass actor, the repository's write deploy key: on a repository a person
+  // owns, the GitHub Actions app cannot be a bypass actor. So the token stays
+  // read-only and the key reaches exactly one step, the push.
+  const KEY = "GAMES_DATA_DEPLOY_KEY";
+  for (const f of files) {
+    const t = read(f);
+    const live = t.split("\n").filter((l) => !l.trimStart().startsWith("#"));
+    assert.ok(!live.some((l) => /git push/.test(l)), `${f} pushes outside bin/push-data.sh`);
+    assert.ok(!live.some((l) => /^\s*contents:\s*write/.test(code(l))), `${f} gives GITHUB_TOKEN write`);
+    const refs = live.filter((l) => l.includes(KEY));
+    if (f !== "sign.yml" && f !== "resign.yml") {
+      assert.deepEqual(refs, [], `${f} names the deploy key`);
+      continue;
+    }
+    assert.deepEqual(refs.map((l) => l.trim()), [`${KEY}: \${{ secrets.${KEY} }}`], `${f}: the deploy key goes, by name, into one step's env`);
+    const i = live.findIndex((l) => l.includes(KEY));
+    const step = live.slice(live.slice(0, i).findLastIndex((l) => /^ {6}- /.test(l)), live.findIndex((l, j) => j > i && /^ {6}- /.test(l)) >>> 0);
+    assert.ok(step.some((l) => /^ {10}bin\/push-data\.sh catalogue-data "/.test(l)), `${f}: the step holding the deploy key is not the push`);
+    for (const [name, lines] of Object.entries(jobs(t))) {
+      if (lines.some((l) => l.includes(KEY))) assert.ok(lines.some((l) => /^ {4}environment:\s*publish-games\s*$/.test(code(l))), `${f} job ${name} uses the deploy key outside publish-games`);
+    }
+    const checkouts = t.split(/\n {6}- /).filter((s) => /uses: actions\/checkout@/.test(s));
+    for (const c of checkouts) assert.match(c, /persist-credentials: false/, `${f}: a checkout keeps GITHUB_TOKEN on disk`);
+  }
+  const sh = fs.readFileSync(path.join(ROOT, "bin", "push-data.sh"), "utf8");
+  assert.ok((fs.statSync(path.join(ROOT, "bin", "push-data.sh")).mode & 0o111) !== 0, "bin/push-data.sh is not executable");
+  assert.match(sh, /StrictHostKeyChecking=yes/);
+  assert.match(sh, /UserKnownHostsFile=/);
+  assert.match(sh, /github\.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl/);
+  assert.match(sh, /git push -q "git@github\.com:\$\{GITHUB_REPOSITORY\}\.git" HEAD:data/);
+});
+
 test("every action is pinned to the peeled commit recorded in action-pins.json", () => {
   for (const f of files) {
     for (const l of read(f).split("\n")) {
@@ -150,8 +187,8 @@ test("every action is pinned to the peeled commit recorded in action-pins.json",
 test("permissions are deny-by-default at the top and minimal per job", () => {
   const allowed = {
     "ingest.yml": { work: { contents: "read", "id-token": "write" }, ingest: { contents: "read" }, report: { contents: "read", "id-token": "write" } },
-    "sign.yml": { work: { contents: "read", actions: "read", "id-token": "write" }, sign: { contents: "write", actions: "read" }, report: { contents: "read", "id-token": "write" } },
-    "resign.yml": { resign: { contents: "write" } },
+    "sign.yml": { work: { contents: "read", actions: "read", "id-token": "write" }, sign: { contents: "read", actions: "read" }, report: { contents: "read", "id-token": "write" } },
+    "resign.yml": { resign: { contents: "read" } },
     "promote.yml": { promote: { contents: "read" } },
     "ci.yml": { tests: { contents: "read" }, vendored: { contents: "read" } },
   };
