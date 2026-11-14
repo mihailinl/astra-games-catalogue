@@ -160,7 +160,7 @@ jobs:
         env:
           GAMES_SIGNING_KEY_CURRENT: ${{ secrets.GAMES_SIGNING_KEY_CURRENT }}
           GAMES_SIGNING_KEY_NEXT: ${{ secrets.GAMES_SIGNING_KEY_NEXT }}
-        run: node bin/sign.mjs --data catalogue-data --trust registry/registry/v1/trust.json --candidates "$RUNNER_TEMP/candidates" --acts "$RUNNER_TEMP/work/acts.json" --health "$RUNNER_TEMP/work/health.json" --report "$RUNNER_TEMP/report/sign-report.json"
+        run: node bin/sign.mjs --data catalogue-data --trust registry/registry/v1/trust.json --candidates "$RUNNER_TEMP/candidates" --signable "$RUNNER_TEMP/work/signable.json" --acts "$RUNNER_TEMP/work/acts.json" --health "$RUNNER_TEMP/work/health.json" --report "$RUNNER_TEMP/report/sign-report.json"
 
       - name: Push the state and the documents to `data`
         id: push

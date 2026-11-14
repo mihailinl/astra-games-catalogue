@@ -160,11 +160,14 @@ export async function signWork({ out, env = process.env, client = serviceClient(
     fs.mkdirSync(out, { recursive: true });
     writeJson(path.join(out, "acts.json"), []);
     writeJson(path.join(out, "health.json"), null);
+    writeJson(path.join(out, "signable.json"), null);
     output(env, { acts: 0, health: "0", candidates: 0, todo: "false" });
     log.log("work: unavailable; nothing to sign (resign.yml keeps the daily re-sign)");
     return { acts: 0, health: false, candidates: 0, todo: false };
   }
-  const { acts, health } = work;
+  const { acts, health, signable, signableProblem } = work;
+  // Fail closed (lib/service.mjs checkSignable): null signs no new candidate; acts and health still apply.
+  if (signable === null) log.log(`::warning::${signableProblem}; no new candidate is signed this run (acts, health and the re-sign go on)`);
   let candidates = 0;
   if (env.INGEST_RUN_ID) {
     const r = await github.runArtifacts(env.GITHUB_REPOSITORY, env.INGEST_RUN_ID);
@@ -175,6 +178,7 @@ export async function signWork({ out, env = process.env, client = serviceClient(
   fs.mkdirSync(out, { recursive: true });
   writeJson(path.join(out, "acts.json"), acts);
   writeJson(path.join(out, "health.json"), health);
+  writeJson(path.join(out, "signable.json"), signable);
   const todo = acts.length > 0 || health !== null || candidates > 0;
   output(env, { acts: acts.length, health: health === null ? "0" : "1", candidates, todo: String(todo) });
   log.log(`work: ${acts.length} act(s), ${health === null ? "no" : "new"} health, ${candidates} candidate(s); ${todo ? "signing" : "nothing to sign (resign.yml keeps the daily re-sign)"}`);
@@ -188,6 +192,10 @@ export async function signReport({ reportFile, env = process.env, client = servi
   try {
     const unnamed = signUnnamed(report);
     if (unnamed) log.warn(`${unnamed} accepted item(s) name no lease (an unreadable candidate); left out, their leases expire and are re-leased`);
+    // The sign gate (plugins 0144): candidates the service would not settle were never accepted, so they are in
+    // no accepted[] item; they are named here and nowhere on the wire.
+    const leftOut = report.leftOut ?? [];
+    if (leftOut.length) log.warn(`${leftOut.length} candidate(s) left out as not signable: ${leftOut.map((l) => l.lease_id ?? "(no lease)").join(", ")}`);
     await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
     log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
   } catch (e) {

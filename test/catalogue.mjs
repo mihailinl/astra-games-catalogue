@@ -90,7 +90,10 @@ export function makeCatalogue({ withNext = false } = {}) {
   const { kindKeys } = loadTrust({ file: trustFile, now: T0, roots });
   const data = tmpdir("agc-data-");
   const env = { GAMES_SIGNING_KEY_CURRENT: current.seedB64, ...(withNext ? { GAMES_SIGNING_KEY_NEXT: next.seedB64 } : {}) };
-  const sign = (opts = {}) => runSign({ dataDir: data, root, env, now: T0, trustFile, roots, ...opts });
+  // The service's `signable` defaults to every candidate handed in, as a service that would settle them all
+  // answers; a test of the sign gate passes its own (null: a service before 0144). runSign itself defaults to null.
+  const sign = (opts = {}) => runSign({ dataDir: data, root, env, now: T0, trustFile, roots,
+    signable: (opts.candidates ?? []).map((c) => c?.request?.lease_id).filter((l) => typeof l === "string"), ...opts });
   const dist = (f) => JSON.parse(fs.readFileSync(path.join(data, "dist", f), "utf8"));
   const state = (f) => JSON.parse(fs.readFileSync(path.join(data, f), "utf8"));
   return { root, data, env, kindKeys, trustFile, roots, rootKey, current, next, commandsCurrent, commandsNext, indexKey, sign, dist, state, trustWith, promotedTrust, useTrust };
@@ -153,7 +156,7 @@ export function candidate(o = {}) {
   };
   return {
     schema: CANDIDATE_SCHEMA,
-    request: { repo_id, tag: `v${version}` },
+    request: { lease_id: o.lease_id ?? `L${repo_id}-${version.replace(/[^A-Za-z0-9]/g, "_")}`, repo_id, tag: `v${version}` },
     verdict: o.verdict ?? "accept",
     findings: o.findings ?? [],
     flags: [],
