@@ -16,6 +16,8 @@
 //   C6 signWork stops writing signable.json                                     -> "sign-work writes" fails
 //   C7 sign.yml stops passing --signable                                        -> "sign.yml passes" fails
 //   C8 runSign defaults signable to "everything" (`signable = undefined` -> all) -> "the compiled default" fails
+//   C9 gateCandidates drops `&& !taken.has(lease)` (a second candidate of a lease is admitted) -> "duplicate" fails
+//   C10 sign.yml's download path differs from the upload / sign-work --out directory           -> "work artifact path" fails
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -144,4 +146,36 @@ test("sign-work writes signable.json: the service's list, or null with a warning
 test("sign.yml passes the work job's signable.json to the signer", () => {
   const yml = fs.readFileSync(path.join(ROOT, ".github", "workflows", "sign.yml"), "utf8");
   assert.match(yml, /node bin\/sign\.mjs [^\n]*--signable "\$RUNNER_TEMP\/work\/signable\.json"/);
+});
+
+test("a second candidate naming an already-admitted lease is left out as a duplicate: only the first is signed", () => {
+  const first = candidate({ slug: "first" });
+  const second = candidate({ slug: "second" });
+  const lease = first.request.lease_id;
+  second.request.lease_id = lease;
+  const { admitted, leftOut } = gateCandidates([first, second], [lease]);
+  assert.deepEqual(admitted, [first], "the first candidate of the lease only");
+  assert.equal(leftOut.length, 1);
+  assert.equal(leftOut[0].lease_id, lease);
+  assert.match(leftOut[0].reason, /^duplicate lease/);
+  assert.deepEqual(gateCandidates([second, first], [lease]).admitted, [second], "first in order wins, whichever it is");
+
+  // and through the signer: the second never lists
+  const c = makeCatalogue();
+  const r = c.sign({ candidates: [first, second], signable: [lease] });
+  assert.deepEqual(listedIds(c), ["author/first"]);
+  assert.ok(r.leftOut.some((l) => /^duplicate lease/.test(l.reason)));
+});
+
+test("the sign.yml work artifact path is the one sign.mjs reads: sign-work --out, the upload, the download and --signable agree", () => {
+  const yml = fs.readFileSync(path.join(ROOT, ".github", "workflows", "sign.yml"), "utf8");
+  const out = /sign-work --out "\$RUNNER_TEMP\/(\w+)"/.exec(yml);
+  assert.ok(out, "the work job names the directory sign-work writes");
+  const dir = out[1];
+  // the work job uploads that directory as games-work; the sign job downloads games-work into the same one
+  const sections = [...yml.matchAll(/name: games-work\n\s+path: \$\{\{ runner\.temp \}\}\/(\w+)/g)].map((m) => m[1]);
+  assert.deepEqual(sections, [dir, dir], "upload and download both use the directory sign-work writes");
+  assert.match(yml, new RegExp(`--signable "\\$RUNNER_TEMP/${dir}/signable\\.json"`), "the signer reads signable.json from it");
+  const service = fs.readFileSync(path.join(ROOT, "bin", "service.mjs"), "utf8");
+  assert.match(service, /path\.join\(out, "signable\.json"\)/, "and sign-work writes that file name");
 });
