@@ -45,7 +45,7 @@ export function makeZip(files) {
  * through the same Python zipfile core as `makeZip`, which only takes text).
  * @param {Record<string, Buffer|string>} files
  */
-export function makeZipBytes(files) {
+export function makeZipBytes(files, { regularFileMode = false } = {}) {
   const payload = {};
   for (const [name, data] of Object.entries(files)) {
     payload[name] = (Buffer.isBuffer(data) ? data : Buffer.from(data, "utf8")).toString("base64");
@@ -58,6 +58,7 @@ export function makeZipBytes(files) {
     "    for name in sorted(files):",
     "        zi = zipfile.ZipInfo(name, date_time=(2026, 10, 31, 0, 0, 0))",
     "        zi.compress_type = zipfile.ZIP_DEFLATED",
+    "        if " + (regularFileMode ? "True" : "False") + ": zi.external_attr = 0o100644 << 16",
     "        z.writestr(zi, base64.b64decode(files[name]))",
     "sys.stdout.buffer.write(buf.getvalue())",
   ].join("\n");
