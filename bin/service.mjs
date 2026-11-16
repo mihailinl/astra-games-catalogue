@@ -199,8 +199,14 @@ export async function signReport({ reportFile, env = process.env, client = servi
     await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
     log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
   } catch (e) {
-    if (isUnavailable(e)) log.log(unavailableWarning(e));
-    else failed.push(`sign-results: ${e.message}`);
+    // NOT a retry, unlike the other doors: the sign job already signed and pushed the data commit, and the lease is
+    // settled ONLY by this result (games_accepted is written by no other door). A swallowed `unavailable` left the job
+    // green with the settlement lost, and the service then treated the candidate as never signed (plugins 0144 review,
+    // S1). Fail the job, loudly, with the way out: the report job re-runs from its artifact.
+    if (isUnavailable(e)) {
+      log.log(unavailableWarning(e).replace("nothing settled, the lease expires and is re-leased (the retry)", "the sign result was NOT recorded"));
+      failed.push(`sign-results: ${e.door} answered unavailable; the data commit is already signed and the service has NOT recorded the result. Re-run this report job ("Re-run failed jobs" on the sign run; it reads the run's games-sign-report artifact) until it succeeds`);
+    } else failed.push(`sign-results: ${e.message}`);
   }
   try {
     log.log(`signed wake: HTTP ${await client.signedWake()}`);
