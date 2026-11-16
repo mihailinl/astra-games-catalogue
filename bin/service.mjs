@@ -204,7 +204,7 @@ export async function signReport({ reportFile, env = process.env, client = servi
     // green with the settlement lost, and the service then treated the candidate as never signed (plugins 0144 review,
     // S1). Fail the job, loudly, with the way out: the report job re-runs from its artifact.
     if (isUnavailable(e)) {
-      log.log(unavailableWarning(e).replace("nothing settled, the lease expires and is re-leased (the retry)", "the sign result was NOT recorded"));
+      log.log(`::warning::${e.door} answered unavailable; the sign result was NOT recorded (the report job fails; re-run it)`);
       failed.push(`sign-results: ${e.door} answered unavailable; the data commit is already signed and the service has NOT recorded the result. Re-run this report job ("Re-run failed jobs" on the sign run; it reads the run's games-sign-report artifact) until it succeeds`);
     } else failed.push(`sign-results: ${e.message}`);
   }
