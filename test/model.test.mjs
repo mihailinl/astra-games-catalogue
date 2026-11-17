@@ -40,14 +40,16 @@ test("no [integration.link] table: link is null, no digest, no problems", () => 
 
 test("gi-probe check's link.digest, when it agrees, raises no problem", () => {
   const toml = readTomlFile(path.join(AP, "testdata/games/manifests/valid/game-specific-link.toml"));
-  const files = { "astra/SKILL.md": "a".repeat(64), "astra/tools/drop_item.json": "b".repeat(64), "astra/triggers/boss_spawned.json": "c".repeat(64), "astra/events/player_died.json": "d".repeat(64) };
+  // Link v1: the context and result schemas are named too, so they must be files of the zip
+  const files = { "astra/SKILL.md": "a".repeat(64), "astra/tools/drop_item.json": "b".repeat(64), "astra/triggers/boss_spawned.json": "c".repeat(64), "astra/events/player_died.json": "d".repeat(64), "astra/context.json": "e".repeat(64), "astra/tools/drop_item.result.json": "f".repeat(64) };
   const r = linkOf(toml.manifest, files, linkOf(toml.manifest, files).link.digest);
   assert.deepEqual(r.problems, []);
 });
 
 test("gi-probe check's link.digest, when it disagrees, is a problem (ingest.mjs turns it into E_PROBE_DISAGREES)", () => {
   const toml = readTomlFile(path.join(AP, "testdata/games/manifests/valid/game-specific-link.toml"));
-  const files = { "astra/SKILL.md": "a".repeat(64), "astra/tools/drop_item.json": "b".repeat(64), "astra/triggers/boss_spawned.json": "c".repeat(64), "astra/events/player_died.json": "d".repeat(64) };
+  // Link v1: the context and result schemas are named too, so they must be files of the zip
+  const files = { "astra/SKILL.md": "a".repeat(64), "astra/tools/drop_item.json": "b".repeat(64), "astra/triggers/boss_spawned.json": "c".repeat(64), "astra/events/player_died.json": "d".repeat(64), "astra/context.json": "e".repeat(64), "astra/tools/drop_item.result.json": "f".repeat(64) };
   const r = linkOf(toml.manifest, files, "f".repeat(64));
   assert.ok(r.problems.some((p) => p.includes("digest") && p.includes("gi-probe")), JSON.stringify(r.problems));
 });

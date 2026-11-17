@@ -1,0 +1,22 @@
+# VENDORED from mihailinl/AstraPlugins at f87d53da52dee4fcd300e36eb9f4a6e208dcf001, path testdata/games/manifests/invalid/link-context-boolean.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# Invalid: `context = true`, the earlier draft's switch for free text. `context` now names the
+# context schema (manifest.md §2.6; link-v1.md §6, the AI profile): a game tells the AI facts,
+# never text.
+schema = 1
+
+[integration]
+id = "someone.context-boolean"
+name = "Context Boolean"
+version = "0.1.0"
+license = "MIT"
+
+[integration.link]
+context = true
+shares_other_players = false
+
+[target]
+exe = "Game.exe"
+platforms = ["windows-x64"]
+anti_cheat = "none"

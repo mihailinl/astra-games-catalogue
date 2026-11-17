@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at 0ca304000ae362dea4d78c610d72411859a7b4ed, path testdata/games/content/releases/glb-named-bin/astra-gi.toml.
+# VENDORED from mihailinl/AstraPlugins at f87d53da52dee4fcd300e36eb9f4a6e208dcf001, path testdata/games/content/releases/glb-named-bin/astra-gi.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # content check golden: a GLB (it begins with glTF) named data/avatar.bin, carrying a VRM whose

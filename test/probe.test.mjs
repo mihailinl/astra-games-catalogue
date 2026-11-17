@@ -136,18 +136,45 @@ test("binaryProbe fails closed before it runs anything: no pin, no binary", asyn
   await assert.rejects(binaryProbe({ env: { GI_PROBE: path.join(tmpdir(), "nothing-here") }, pin: PIN_051 }).run("check", ["check", "z"]), ProbeUnavailable);
 });
 
+test("Link v1's consent members come from the table: talk, speaks (any event), low_tools (tools with danger = low)", () => {
+  const golden = path.join(ROOT, "lib/vendor/astraplugins/testdata/games/manifests/valid/link-danger-speaks-talk.toml");
+  const { manifest } = readTomlFile(golden);
+  const names = ["astra/context.json", "astra/events/goal_reached.json", "astra/events/player_died.json"];
+  for (const t of ["come_here", "map_pin_add", "drop_item"]) names.push(`astra/tools/${t}.json`, `astra/tools/${t}.result.json`);
+  const files = Object.fromEntries(names.map((n, i) => [n, String(i % 10).repeat(64)]));
+  const l = linkOf(manifest, files);
+  assert.deepEqual(l.problems, []);
+  // two of three tools are danger = "low"; drop_item is "high"; goal_reached speaks
+  assert.deepEqual({ context: l.link.context, talk: l.link.talk, speaks: l.link.speaks, low_tools: l.link.low_tools }, { context: true, talk: true, speaks: true, low_tools: 2 });
+  assert.equal(Object.keys(l.schemaDigests).length, names.length, "every named schema, context and results included");
+  // and with no context, no talk, no speaking event and no low tool, they read false, false, false, 0
+  const bare = { integration: { link: { shares_other_players: false, tools: [{ name: "x", description: "x", params: "p.json", result: "r.json", danger: "high" }], events: [{ name: "player_died", data: "e.json" }] } } };
+  assert.deepEqual(linkOf(bare, { "p.json": "a".repeat(64), "r.json": "b".repeat(64), "e.json": "c".repeat(64) }).link,
+    { context: false, shares_other_players: false, skill_digest: null, digest: linkOf(bare, {}).link.digest, talk: false, speaks: false, low_tools: 0 });
+});
+
 test("what gi-probe does not report comes from the catalogue's own reading (independent of link.digest, 0.5.1+): schema_digests, game files", () => {
   const golden = path.join(ROOT, "lib/vendor/astraplugins/testdata/games/manifests/valid/game-specific-link.toml");
   const { manifest } = readTomlFile(golden);
   const files = {
     "astra/SKILL.md": "1".repeat(64), "astra/tools/drop_item.json": "2".repeat(64),
     "astra/triggers/boss_spawned.json": "3".repeat(64), "astra/events/player_died.json": "4".repeat(64), "winhttp.dll": "5".repeat(64),
+    "astra/context.json": "6".repeat(64), "astra/tools/drop_item.result.json": "7".repeat(64),
   };
   const l = linkOf(manifest, files);
   assert.deepEqual(l.problems, []);
   // manifest.md §2.6.1: digest is SHA-256(JCS([integration.link] as parsed)); vectors.json's "game-specific-link" vector pins this exact value
-  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64), digest: "e26a440ebf1c3cacc9891fc8b031d9c0d8cbde9276ceeba68d1866a972a35ea2" });
-  assert.deepEqual(l.schemaDigests, { "astra/tools/drop_item.json": "2".repeat(64), "astra/triggers/boss_spawned.json": "3".repeat(64), "astra/events/player_died.json": "4".repeat(64) });
+  // Link v1 (games-index-v1.md §2.1): `context` is true because the table NAMES a context schema; talk,
+  // speaks and low_tools are written even when false/0.
+  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64), digest: "6163886130696822d12248f4f7342e427b72d7808daab8ebc8cec050e4f77a2b", talk: false, speaks: false, low_tools: 0 });
+  // ... and the context and result schemas are named schemas, so their bytes are in schema_digests
+  assert.deepEqual(l.schemaDigests, {
+    "astra/context.json": "6".repeat(64), "astra/tools/drop_item.json": "2".repeat(64), "astra/tools/drop_item.result.json": "7".repeat(64),
+    "astra/triggers/boss_spawned.json": "3".repeat(64), "astra/events/player_died.json": "4".repeat(64),
+  });
+  // a named result schema missing from the zip is a problem, as a missing params schema is
+  const { "astra/tools/drop_item.result.json": _r, ...noResult } = files;
+  assert.ok(linkOf(manifest, noResult).problems.some((p) => p.includes("tool result")), JSON.stringify(linkOf(manifest, noResult).problems));
   const { "astra/SKILL.md": _, ...noSkill } = files;
   assert.equal(linkOf(manifest, noSkill).problems.length, 1);
   // check.rs l.539-544's row for the golden's one game file, against the catalogue's digest
