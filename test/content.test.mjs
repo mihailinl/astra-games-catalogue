@@ -683,6 +683,26 @@ test("E_CONTENT_AVATAR_IN_PACK: an avatar-classified file inside a pack part is 
   assert.deepEqual(r.content, [], "a refused pack is never listed");
 });
 
+// AstraPlugins #177 (b8bb1cd): an animset (.astrapack, one pack at the zip
+// root) with no clip file under clips/ is refused at ingest step 10 with
+// E_CONTENT_FORMAT, because its index entry's `clips` is 1-4096 and it
+// could never be listed. The mutation: the SAME pack with its clips restored
+// (bundle-animset-wave) is not refused for that reason.
+test("E_CONTENT_FORMAT: an embedded .astrapack with no clip file under clips/ is refused", () => {
+  const wave = releaseGolden("bundle-animset-wave");
+  const toml = Buffer.from('name = "wave"\n');
+  const man = {
+    accessories: [], body: null, builtins: {}, character: { dir: "characters/aiko", id: "aiko", name: "Aiko" }, excluded: [],
+    files: { "animpack.toml": { sha256: "sha256:9ee744a91926a20f1e6413aa98e9afb7139448f9a107e8dcbc83e2006991f1d6", size: toml.length } },
+    format: "astra.animpack", format_version: 1, generator: "testdata/content/gen.py", kind: "vrm", needs: [], packs: [], schema: 5,
+  };
+  const empty = makeZipBytes({ "animpack.toml": toml, "astrachar.json": Buffer.from(JSON.stringify(man)) }, { regularFileMode: true });
+  const r = runGolden({ ...wave.files, "packs/wave.astrapack": empty }, wave.manifest);
+  assert.deepEqual(refusalsOf(r), [CODES.E_CONTENT_FORMAT], JSON.stringify(r.findings));
+  assert.ok(r.findings.some((f) => /no clip file/.test(f.message)), JSON.stringify(r.findings));
+  assert.deepEqual(refusalsOf(runGolden(wave.files, wave.manifest)), [], "with its clips the same pack is not refused");
+});
+
 // ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
 
 /** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */
