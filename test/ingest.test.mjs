@@ -269,7 +269,7 @@ test("the entry's game files, Link summary and schema digests come from the cata
 });
 
 test("[integration.link] gets a digest (manifest.md §2.6.1), and gi-probe check's own link.digest (0.5.1+) must agree with it", async () => {
-  const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "context = true", "shares_other_players = false", ""].join("\n");
+  const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "shares_other_players = false", "talk = true", ""].join("\n");
   const zip = stagingZip(text);
   // the default fake gi-probe 0.5.1 now computes link.digest itself
   // (fixtures/gi-probe/fake-gi-probe.mjs), the same way lib/model.mjs's linkOf
