@@ -496,8 +496,8 @@ test("bin/sign.mjs reads the work files and both candidate layouts", () => {
   const dir = tmpdir();
   fs.writeFileSync(path.join(dir, "acts.json"), JSON.stringify([{ type: "M_YANK" }]));
   fs.writeFileSync(path.join(dir, "health.json"), "null");
-  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "acts.json"), healthFile: path.join(dir, "health.json") }), { acts: [{ type: "M_YANK" }], health: undefined, signable: null });
-  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "none.json"), healthFile: null }), { acts: [], health: undefined, signable: null });
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "acts.json"), healthFile: path.join(dir, "health.json") }), { acts: [{ type: "M_YANK" }], health: undefined, signable: null, signableProblem: "no signable.json" });
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "none.json"), healthFile: null }), { acts: [], health: undefined, signable: null, signableProblem: "no signable.json" });
   const c = path.join(dir, "c");
   fs.mkdirSync(path.join(c, "games-candidate-L2"), { recursive: true });
   fs.writeFileSync(path.join(c, "games-candidate-L2", "candidate.json"), JSON.stringify({ n: 2 }));

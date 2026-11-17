@@ -150,7 +150,17 @@ export async function ingestReport({ candidates, env = process.env, client = ser
 
 const CANDIDATE_ARTIFACT = /^games-candidate-[A-Za-z0-9_-]{1,64}$/;
 
-export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console }) {
+/**
+ * signable.json is `{read_at, leases}`: WHEN the service was asked, beside its answer. The signer
+ * (bin/sign.mjs readWorkFiles) refuses a list older than SIGNABLE_MAX_AGE_MS, so "Re-run failed jobs"
+ * hours later -- which reuses this job's artifact without asking again -- signs no new candidate from
+ * a stale list (Opus review of minice-71s, 2026-11-17, S2).
+ */
+export function signableFile(leases, nowMs) {
+  return { read_at: new Date(nowMs).toISOString(), leases };
+}
+
+export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console, now = () => Date.now() }) {
   let work;
   try {
     work = readWork(await client.work());
@@ -160,11 +170,12 @@ export async function signWork({ out, env = process.env, client = serviceClient(
     fs.mkdirSync(out, { recursive: true });
     writeJson(path.join(out, "acts.json"), []);
     writeJson(path.join(out, "health.json"), null);
-    writeJson(path.join(out, "signable.json"), null);
+    writeJson(path.join(out, "signable.json"), signableFile(null, now()));
     output(env, { acts: 0, health: "0", candidates: 0, todo: "false" });
     log.log("work: unavailable; nothing to sign (resign.yml keeps the daily re-sign)");
     return { acts: 0, health: false, candidates: 0, todo: false };
   }
+  const readAt = now();
   const { acts, health, signable, signableProblem } = work;
   // Fail closed (lib/service.mjs checkSignable): null signs no new candidate; acts and health still apply.
   if (signable === null) log.log(`::warning::${signableProblem}; no new candidate is signed this run (acts, health and the re-sign go on)`);
@@ -178,7 +189,7 @@ export async function signWork({ out, env = process.env, client = serviceClient(
   fs.mkdirSync(out, { recursive: true });
   writeJson(path.join(out, "acts.json"), acts);
   writeJson(path.join(out, "health.json"), health);
-  writeJson(path.join(out, "signable.json"), signable);
+  writeJson(path.join(out, "signable.json"), signableFile(signable, readAt));
   const todo = acts.length > 0 || health !== null || candidates > 0;
   output(env, { acts: acts.length, health: health === null ? "0" : "1", candidates, todo: String(todo) });
   log.log(`work: ${acts.length} act(s), ${health === null ? "no" : "new"} health, ${candidates} candidate(s); ${todo ? "signing" : "nothing to sign (resign.yml keeps the daily re-sign)"}`);

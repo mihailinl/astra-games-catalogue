@@ -18,6 +18,8 @@
 //   C8 runSign defaults signable to "everything" (`signable = undefined` -> all) -> "the compiled default" fails
 //   C9 gateCandidates drops `&& !taken.has(lease)` (a second candidate of a lease is admitted) -> "duplicate" fails
 //   C10 sign.yml's download path differs from the upload / sign-work --out directory           -> "work artifact path" fails
+//   C11 readWorkFiles drops the age check (`now - readAt > SIGNABLE_MAX_AGE_MS` never true)       -> "stale" fails
+//   C12 readWorkFiles accepts the bare-list shape again                                       -> "the pre-stamp shape" fails
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -25,7 +27,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { signWork } from "../bin/service.mjs";
-import { readWorkFiles } from "../bin/sign.mjs";
+import { readWorkFiles, SIGNABLE_MAX_AGE_MS } from "../bin/sign.mjs";
 import { gateCandidates, runSign } from "../lib/pipeline.mjs";
 import { checkSignable, MAX_ACCEPTED, MAX_SIGNABLE, readWork, signResultBody } from "../lib/service.mjs";
 import { act, candidate, makeCatalogue } from "./catalogue.mjs";
@@ -111,21 +113,38 @@ test("checkSignable / readWork: a list of lease ids is kept once each; absent, n
   assert.equal(readWork({ acts: [], health: null }).signable, null, "absent: an older service");
 });
 
-test("bin/sign.mjs reads signable.json again and fails closed: a list kept, absent, null, unreadable or malformed is null", () => {
+test("bin/sign.mjs reads signable.json again and fails closed: a list kept, absent, null, unreadable, malformed, unstamped, stale or future is null", () => {
   const dir = tmpdir();
-  const file = (name, text) => {
+  const NOW = Date.parse("2026-11-17T12:00:00Z");
+  const file = (name, value) => {
     const p = path.join(dir, name);
-    fs.writeFileSync(p, text);
+    fs.writeFileSync(p, typeof value === "string" ? value : JSON.stringify(value));
     return p;
   };
-  const read = (signableFile) => readWorkFiles({ actsFile: null, healthFile: null, signableFile }).signable;
-  assert.deepEqual(read(file("ok.json", JSON.stringify(["L1", "L2"]))), ["L1", "L2"]);
-  assert.equal(read(null), null);
-  assert.equal(read(path.join(dir, "absent.json")), null);
-  assert.equal(read(file("null.json", "null")), null);
-  assert.equal(read(file("garbage.json", "{not json")), null, "unreadable is not a refused run");
-  assert.equal(read(file("bad.json", JSON.stringify(["L1", "../x"]))), null);
-  assert.equal(read(file("obj.json", JSON.stringify({ signable: ["L1"] }))), null);
+  const at = (min) => new Date(NOW + min * 60000).toISOString();
+  const read = (signableFile) => readWorkFiles({ actsFile: null, healthFile: null, signableFile, now: NOW });
+  assert.deepEqual(read(file("ok.json", { read_at: at(-1), leases: ["L1", "L2"] })).signable, ["L1", "L2"]);
+  assert.equal(read(file("ok.json", { read_at: at(-1), leases: ["L1"] })).signableProblem, null);
+  assert.deepEqual(read(file("edge.json", { read_at: at(-19.9), leases: ["L1"] })).signable, ["L1"], "inside 20 minutes");
+  assert.equal(read(null).signable, null);
+  assert.equal(read(path.join(dir, "absent.json")).signable, null);
+  assert.equal(read(file("null.json", "null")).signable, null);
+  assert.equal(read(file("leases-null.json", { read_at: at(-1), leases: null })).signable, null);
+  assert.equal(read(file("garbage.json", "{not json")).signable, null, "unreadable is not a refused run");
+  assert.equal(read(file("bad.json", { read_at: at(-1), leases: ["L1", "../x"] })).signable, null);
+  // Opus review of minice-71s (2026-11-17, S2): "Re-run failed jobs" reuses the work job's artifact without
+  // asking the service again. A list older than SIGNABLE_MAX_AGE_MS, unstamped (the old bare-list shape) or
+  // dated in the future signs nothing new, and says why.
+  const stale = read(file("stale.json", { read_at: at(-21), leases: ["L1"] }));
+  assert.equal(stale.signable, null);
+  assert.match(stale.signableProblem, /more than 20 minutes ago/);
+  assert.equal(SIGNABLE_MAX_AGE_MS, 20 * 60 * 1000, "under the service's requeue grace");
+  const bare = read(file("bare.json", ["L1"]));
+  assert.equal(bare.signable, null, "the pre-stamp shape is not trusted");
+  assert.match(bare.signableProblem, /no read_at/);
+  assert.equal(read(file("future.json", { read_at: at(6), leases: ["L1"] })).signable, null);
+  assert.deepEqual(read(file("skew.json", { read_at: at(4), leases: ["L1"] })).signable, ["L1"], "a few minutes of clock skew is tolerated");
+  assert.equal(read(file("bad-date.json", { read_at: "yesterday", leases: ["L1"] })).signable, null);
 });
 
 test("sign-work writes signable.json: the service's list, or null with a warning when it names none or a malformed one", async () => {
@@ -133,8 +152,11 @@ test("sign-work writes signable.json: the service's list, or null with a warning
     const dir = tmpdir();
     const logs = [];
     const client = { async work() { return answer; } };
-    await signWork({ out: path.join(dir, "w"), env: { GITHUB_RUN_ID: "4242", GITHUB_OUTPUT: path.join(dir, "out.txt") }, client, github: null, log: { ...quiet, log: (m) => logs.push(m) } });
-    return { signable: JSON.parse(fs.readFileSync(path.join(dir, "w", "signable.json"), "utf8")), logs };
+    await signWork({ out: path.join(dir, "w"), env: { GITHUB_RUN_ID: "4242", GITHUB_OUTPUT: path.join(dir, "out.txt") }, client, github: null, log: { ...quiet, log: (m) => logs.push(m) }, now: () => Date.parse("2026-11-17T12:00:00Z") });
+    const written = JSON.parse(fs.readFileSync(path.join(dir, "w", "signable.json"), "utf8"));
+    // stamped with the moment the service was asked, so the signer can refuse a stale re-run
+    assert.equal(written.read_at, "2026-11-17T12:00:00.000Z");
+    return { signable: written.leases, logs };
   };
   assert.deepEqual((await run({ acts: [], health: null, signable: ["L1"] })).signable, ["L1"]);
   const absent = await run({ acts: [], health: null });
