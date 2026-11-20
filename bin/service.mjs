@@ -150,7 +150,19 @@ export async function ingestReport({ candidates, env = process.env, client = ser
 
 const CANDIDATE_ARTIFACT = /^games-candidate-[A-Za-z0-9_-]{1,64}$/;
 
-export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console }) {
+/**
+ * signable.json is `{read_at, leases}`: WHEN the service was asked, beside its answer. The signer
+ * (bin/sign.mjs readWorkFiles) refuses a list older than SIGNABLE_MAX_AGE_MS, so "Re-run failed jobs"
+ * hours later -- which reuses this job's artifact without asking again -- signs no new candidate from
+ * a stale list (Opus review of minice-71s, 2026-11-17, S2).
+ */
+export function signableFile(leases, nowMs) {
+  return { read_at: new Date(nowMs).toISOString(), leases };
+}
+
+export async function signWork({ out, env = process.env, client = serviceClient({ env }), github = githubApi(), log = console, now = () => Date.now() }) {
+  // Stamped BEFORE the service is asked: the list's age is never understated by the door's latency.
+  const readAt = now();
   let work;
   try {
     work = readWork(await client.work());
@@ -160,11 +172,14 @@ export async function signWork({ out, env = process.env, client = serviceClient(
     fs.mkdirSync(out, { recursive: true });
     writeJson(path.join(out, "acts.json"), []);
     writeJson(path.join(out, "health.json"), null);
+    writeJson(path.join(out, "signable.json"), signableFile(null, readAt));
     output(env, { acts: 0, health: "0", candidates: 0, todo: "false" });
     log.log("work: unavailable; nothing to sign (resign.yml keeps the daily re-sign)");
     return { acts: 0, health: false, candidates: 0, todo: false };
   }
-  const { acts, health } = work;
+  const { acts, health, signable, signableProblem } = work;
+  // Fail closed (lib/service.mjs checkSignable): null signs no new candidate; acts and health still apply.
+  if (signable === null) log.log(`::warning::${signableProblem}; no new candidate is signed this run (acts, health and the re-sign go on)`);
   let candidates = 0;
   if (env.INGEST_RUN_ID) {
     const r = await github.runArtifacts(env.GITHUB_REPOSITORY, env.INGEST_RUN_ID);
@@ -175,6 +190,7 @@ export async function signWork({ out, env = process.env, client = serviceClient(
   fs.mkdirSync(out, { recursive: true });
   writeJson(path.join(out, "acts.json"), acts);
   writeJson(path.join(out, "health.json"), health);
+  writeJson(path.join(out, "signable.json"), signableFile(signable, readAt));
   const todo = acts.length > 0 || health !== null || candidates > 0;
   output(env, { acts: acts.length, health: health === null ? "0" : "1", candidates, todo: String(todo) });
   log.log(`work: ${acts.length} act(s), ${health === null ? "no" : "new"} health, ${candidates} candidate(s); ${todo ? "signing" : "nothing to sign (resign.yml keeps the daily re-sign)"}`);
@@ -188,11 +204,21 @@ export async function signReport({ reportFile, env = process.env, client = servi
   try {
     const unnamed = signUnnamed(report);
     if (unnamed) log.warn(`${unnamed} accepted item(s) name no lease (an unreadable candidate); left out, their leases expire and are re-leased`);
+    // The sign gate (plugins 0144): candidates the service would not settle were never accepted, so they are in
+    // no accepted[] item; they are named here and nowhere on the wire.
+    const leftOut = report.leftOut ?? [];
+    if (leftOut.length) log.warn(`${leftOut.length} candidate(s) left out as not signable: ${leftOut.map((l) => l.lease_id ?? "(no lease)").join(", ")}`);
     await client.signResults(signResultBody({ runId: env.GITHUB_RUN_ID, dataSha: env.DATA_SHA, report }));
     log.log(`sign result reported: ${report.accepted.length} candidate(s), ${report.acts.length} applied, ${(report.duplicateActs ?? []).length} already applied, ${report.refusedActs.length} refused`);
   } catch (e) {
-    if (isUnavailable(e)) log.log(unavailableWarning(e));
-    else failed.push(`sign-results: ${e.message}`);
+    // NOT a retry, unlike the other doors: the sign job already signed and pushed the data commit, and the lease is
+    // settled ONLY by this result (games_accepted is written by no other door). A swallowed `unavailable` left the job
+    // green with the settlement lost, and the service then treated the candidate as never signed (plugins 0144 review,
+    // S1). Fail the job, loudly, with the way out: the report job re-runs from its artifact.
+    if (isUnavailable(e)) {
+      log.log(`::warning::${e.door} answered unavailable; the sign result was NOT recorded (the report job fails; re-run it)`);
+      failed.push(`sign-results: ${e.door} answered unavailable; the data commit is already signed and the service has NOT recorded the result. Re-run this report job ("Re-run failed jobs" on the sign run; it reads the run's games-sign-report artifact) until it succeeds`);
+    } else failed.push(`sign-results: ${e.message}`);
   }
   try {
     log.log(`signed wake: HTTP ${await client.signedWake()}`);

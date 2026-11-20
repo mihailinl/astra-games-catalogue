@@ -496,8 +496,8 @@ test("bin/sign.mjs reads the work files and both candidate layouts", () => {
   const dir = tmpdir();
   fs.writeFileSync(path.join(dir, "acts.json"), JSON.stringify([{ type: "M_YANK" }]));
   fs.writeFileSync(path.join(dir, "health.json"), "null");
-  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "acts.json"), healthFile: path.join(dir, "health.json") }), { acts: [{ type: "M_YANK" }], health: undefined });
-  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "none.json"), healthFile: null }), { acts: [], health: undefined });
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "acts.json"), healthFile: path.join(dir, "health.json") }), { acts: [{ type: "M_YANK" }], health: undefined, signable: null, signableProblem: "no signable.json" });
+  assert.deepEqual(readWorkFiles({ actsFile: path.join(dir, "none.json"), healthFile: null }), { acts: [], health: undefined, signable: null, signableProblem: "no signable.json" });
   const c = path.join(dir, "c");
   fs.mkdirSync(path.join(c, "games-candidate-L2"), { recursive: true });
   fs.writeFileSync(path.join(c, "games-candidate-L2", "candidate.json"), JSON.stringify({ n: 2 }));
@@ -543,7 +543,10 @@ test("sign-report: posts the result, wakes the service, and fails only after bot
   await assert.rejects(signReport({ reportFile: write(REPORT), env: { ...env, DATA_SHA: "" }, client: ok, log: quiet }), /DATA_SHA/);
 });
 
-test("sign-report: `unavailable` (any status) leaves the result unsettled and is not a failure; any other refusal still is", async () => {
+test("sign-report: `unavailable` (any status) FAILS the job -- the data commit is signed and only this result settles it; any other refusal fails too", async () => {
+  // Plugins 0144 review, S1. A swallowed `unavailable` left the job green with the sign result lost; the service
+  // (which writes games_accepted only from this result) then read the candidate as never signed. Mutation: the
+  // `failed.push` in the `isUnavailable` branch removed (the old `log` only) -> every `failed` assertion below fails.
   const dir = tmpdir();
   const write = (r) => { const f = path.join(dir, `r${Math.random()}.json`); fs.writeFileSync(f, JSON.stringify(r)); return f; };
   const env = { GITHUB_RUN_ID: "555", DATA_SHA: "a".repeat(40) };
@@ -551,13 +554,22 @@ test("sign-report: `unavailable` (any status) leaves the result unsettled and is
 
   const warn = [];
   const u = await run(new ServiceRefused("bot/games/sign-results", 503, "unavailable"), { log: (m) => warn.push(m), warn() {}, error() {} });
-  assert.deepEqual(u.failed, []);
-  assert.ok(warn.includes("::warning::bot/games/sign-results answered unavailable; nothing settled, the lease expires and is re-leased (the retry)"));
+  assert.equal(u.failed.length, 1, "the report job fails, so the operator re-runs it");
+  assert.match(u.failed[0], /bot\/games\/sign-results answered unavailable/);
+  assert.match(u.failed[0], /NOT recorded/);
+  assert.match(u.failed[0], /Re-run/, "the line says how to recover");
+  assert.ok(warn.some((m) => m.startsWith("::warning::bot/games/sign-results answered unavailable") && m.includes("NOT recorded")), "and the log line says the result was not recorded");
+  assert.ok(!warn.some((m) => m.includes("re-leased (the retry)")), "never the retry wording: nothing is re-leased for a signed candidate");
 
-  assert.deepEqual((await run(new ServiceRefused("bot/games/sign-results", 503, null))).failed, [], "a 503 with no readable refusal body is read as unavailable too");
-  assert.equal((await run(new ServiceRefused("bot/games/sign-results", 503, "maintenance"))).failed.length, 1, "a 503 with a different token still fails");
+  const wake = fakeService({ signResults: new ServiceRefused("bot/games/sign-results", 503, "unavailable"), signedWake: 202 });
+  const w = await signReport({ reportFile: write(REPORT), env, client: wake, log: quiet });
+  assert.equal(w.failed.length, 1);
+  assert.deepEqual(wake.calls.map(([n]) => n), ["signResults", "signedWake"], "the wake still goes before the job fails");
+
+  assert.equal((await run(new ServiceRefused("bot/games/sign-results", 503, null))).failed.length, 1, "a 503 with no readable refusal body is read as unavailable too");
+  assert.equal((await run(new ServiceRefused("bot/games/sign-results", 503, "maintenance"))).failed.length, 1, "a 503 with a different token fails");
   assert.equal((await run(new ServiceRefused("bot/games/sign-results", 422, "invalid"))).failed.length, 1);
-  assert.equal((await run(new ServiceRefused("bot/games/sign-results", 500, null))).failed.length, 1, "a 500 with no body is not unavailable -- only a 503 reads that way");
+  assert.equal((await run(new ServiceRefused("bot/games/sign-results", 500, null))).failed.length, 1, "a 500 with no body fails");
 });
 
 test("sign result: at most MAX_RESULT_ACTS acts[], each refused act's problems[] cut at MAX_PROBLEMS (contract 6.13.0 §4.6)", () => {
