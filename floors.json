@@ -1,11 +1,11 @@
 {
-  "index": 1795242535,
+  "index": 1795258661,
   "kind": "games",
   "spent": {
     "astra.games.index/1": [],
     "astra.games.withdrawn/1": []
   },
-  "withdrawn": 1795242535,
+  "withdrawn": 1795258661,
   "withdrawn_signers": [
     {
       "key_id": "astra-games-2026a",
