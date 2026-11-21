@@ -1,0 +1,27 @@
+{
+  "$comment": "astra.games.index/1 — signed by astra-games-catalogue. Only `signed` is authenticated; verify it under the domain your own code names.",
+  "signatures": [
+    {
+      "key_id": "astra-games-2026a",
+      "sig": "OgxFbz0QEZRRF09lt+y1E1NaTCKg2LTkgNaK7Ql6519WtZdGmNG+4uM+jEZlfn6nmjVyPt/vV9kQcjNY4+3aAA=="
+    }
+  ],
+  "signed": {
+    "anticheat": [],
+    "engine_codes": {},
+    "entries": [],
+    "expires_at": 1795847335,
+    "games": [],
+    "issued_at": 1795242535,
+    "key_id": "games-current",
+    "loaders": [
+      {
+        "default_enabled": false,
+        "name": "doorstop-winhttp",
+        "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+      }
+    ],
+    "schema": "astra.games.index/1",
+    "serial": 1795242535
+  }
+}

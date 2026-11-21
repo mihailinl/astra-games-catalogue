@@ -1,0 +1,18 @@
+{
+  "$comment": "astra.games.withdrawn/1 — signed by astra-games-catalogue. Only `signed` is authenticated; verify it under the domain your own code names.",
+  "signatures": [
+    {
+      "key_id": "astra-games-2026a",
+      "sig": "3ISjLltLiqmK2Y/BHS1Hr8+FDVGr84RGIxWf0GB3bejyHPwclMMce1xOK0NMi00dHVnvEIXnpHoo78v+KZzvDQ=="
+    }
+  ],
+  "signed": {
+    "expires_at": 1795847335,
+    "issued_at": 1795242535,
+    "key_id": "games-current",
+    "lifts": [],
+    "rows": [],
+    "schema": "astra.games.withdrawn/1",
+    "serial": 1795242535
+  }
+}
