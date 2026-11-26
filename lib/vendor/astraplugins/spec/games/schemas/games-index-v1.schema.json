@@ -16,6 +16,7 @@
     "games": { "type": "array", "items": { "$ref": "#/$defs/gameRow" } },
     "anticheat": { "type": "array", "items": { "$ref": "#/$defs/anticheatMarker" } },
     "loaders": { "type": "array", "items": { "$ref": "#/$defs/loaderAllow" } },
+    "wikis": { "type": "array", "items": { "$ref": "#/$defs/wikiRow" } },
     "engine_codes": {
       "type": "object",
       "propertyNames": { "pattern": "^[a-z][a-z0-9-]{1,31}$" },
@@ -93,6 +94,8 @@
         "context": { "type": "boolean", "description": "games-index-v1.md §2.1: true when the link table names a context schema." },
         "shares_other_players": { "type": "boolean" },
         "skill_digest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "knowledge_digest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "games-index-v1.md §2.1: the knowledge folder's part digest (spec/content/part-digest-v1.md); null when none." },
+        "knowledge_licence": { "type": ["string", "null"], "maxLength": 128, "description": "games-index-v1.md §2.1: the table's knowledge_licence; null when none." },
         "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "talk": { "type": "boolean", "description": "games-index-v1.md §2.1: the table's talk. Absent = false." },
         "low_tools": {
@@ -101,7 +104,13 @@
           "maximum": 16,
           "description": "games-index-v1.md §2.1: how many tools declare danger = low (they run without an approval card). Absent = 0."
         },
-        "speaks": { "type": "boolean", "description": "games-index-v1.md §2.1: true when any event declares speaks = true. Absent = false." }
+        "speaks": { "type": "boolean", "description": "games-index-v1.md §2.1: true when any event declares speaks = true. Absent = false." },
+        "game_tools": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "games-index-v1.md §2.1: how many tools declare danger = game (actions in the player's own game when asked, without an approval card; link-v1.md §5 'Actions in the game'). Absent = 0."
+        }
       }
     },
 
@@ -228,6 +237,24 @@
         },
         "allow_foundations": { "type": "boolean" },
         "note": { "type": "string" }
+      }
+    },
+
+    "wikiRow": {
+      "type": "object",
+      "description": "games-index-v1.md §2.6: a game's public MediaWiki, for the game agent's wiki on demand (link-v1.md §5).",
+      "required": ["store", "id", "api", "name", "licence"],
+      "additionalProperties": false,
+      "properties": {
+        "store": { "const": "steam" },
+        "id": { "type": "integer", "minimum": 1 },
+        "api": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^https://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/api\\.php$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "licence": { "type": "string", "minLength": 1, "maxLength": 128 }
       }
     },
 
