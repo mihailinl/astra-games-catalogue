@@ -287,6 +287,22 @@ test("[integration.link] gets a digest (manifest.md §2.6.1), and gi-probe check
   assert.equal(noDigest.verdict, "accept", JSON.stringify(noDigest.findings));
 });
 
+test("a GI with a knowledge folder gets knowledge_digest = the folder's part digest and its licence; one without reads null", async () => {
+  const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "shares_other_players = false", 'knowledge = "astra/knowledge"', 'knowledge_licence = "CC-BY-SA-4.0"', ""].join("\n");
+  const kb = { "astra/knowledge/a.md": "# A\nfirst", "astra/knowledge/sub/b.md": "# B\nsecond" };
+  const c = await run({ zip: makeZip({ "astra-gi.toml": text, "BepInEx/plugins/Staging.dll": "not really a dll", ...kb }) });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  // part-digest-v1.md §2: [path below the folder, sha256] pairs by UTF-8 byte order, JCS, SHA-256
+  const pairs = [["a.md", sha256(Buffer.from(kb["astra/knowledge/a.md"]))], ["sub/b.md", sha256(Buffer.from(kb["astra/knowledge/sub/b.md"]))]];
+  assert.equal(c.entry.link.knowledge_digest, sha256(Buffer.from(JSON.stringify(pairs))));
+  assert.equal(c.entry.link.knowledge_licence, "CC-BY-SA-4.0");
+  assert.equal(c.entry.link.game_tools, 0);
+  // a link table with no knowledge: both null, never absent
+  const bare = await run({ zip: stagingZip(fixtureText("astra-gi.toml") + ["", "[integration.link]", "talk = true", ""].join("\n")) });
+  assert.equal(bare.entry.link.knowledge_digest, null);
+  assert.equal(bare.entry.link.knowledge_licence, null);
+});
+
 test("a VAC game and a game a moderator refused are refused; an online game is only flagged", async () => {
   const vac = fixtureText("astra-gi.toml").replace("steam_appid = 4000001", "steam_appid = 4000002");
   const a = await run({ zip: stagingZip(vac) });
