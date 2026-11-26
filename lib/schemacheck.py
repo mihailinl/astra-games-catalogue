@@ -1578,11 +1578,12 @@ def part_digest_of_folder(zip_path, folder):
                 name = info.filename.replace("\\", "/")
                 if info.is_dir() or not name.startswith(root + "/"):
                     continue
-                raw = z.read(info)
-                total += len(raw)
+                # The header's size bounds the read (ZipExtFile stops at file_size), so the cap is
+                # checked before an entry is inflated, not after one huge entry already was.
+                total += info.file_size
                 if total > PART_DIGEST_READ_MAX:
                     return {"ok": False, "error": f"{folder} holds more than {PART_DIGEST_READ_MAX} bytes"}
-                files[name] = raw
+                files[name] = z.read(info)
     except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError, EOFError, zlib.error) as e:
         return {"ok": False, "error": f"not a readable zip: {e}"}
     if not files:

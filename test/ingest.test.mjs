@@ -7,6 +7,7 @@
 // gi-probe never lets a release through.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -14,7 +15,7 @@ import { test } from "node:test";
 import { bindingTokenSha256, ingestRelease, parseRequest } from "../lib/ingest.mjs";
 import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
-import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
+import { folderPartDigest, loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { MAX_PARTS, projectCandidate } from "../lib/service.mjs";
 import { emptyModeration } from "../lib/state.mjs";
 import { PIN_051, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
@@ -835,4 +836,18 @@ test("first-party: a 0.2.7 source of its own repository runs compat (R30); compa
   const probe2 = fakeProbe();
   await run({ probe: probe2 });
   assert.ok(!probe2.calls.some((a) => a[0] === "compat"));
+});
+
+test("a knowledge folder over 64 MiB is refused by its declared size, before an entry is inflated", () => {
+  // review finding: the cap was checked after z.read(), so one huge entry was inflated in full first
+  const zip = path.join(tmpdir("kb-cap-"), "big.zip");
+  execFileSync("python3", ["-c", [
+    "import sys, zipfile",
+    "with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:",
+    "    z.writestr('astra/knowledge/small.md', 'ok')",
+    "    z.writestr('astra/knowledge/zeros.bin', bytes(65 * 1024 * 1024))",
+  ].join("\n"), zip]);
+  const r = folderPartDigest(zip, "astra/knowledge");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /holds more than 67108864 bytes/);
 });
