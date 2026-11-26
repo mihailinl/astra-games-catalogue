@@ -17,7 +17,7 @@ import { buildWithdrawnBody, INDEX_SCHEMA, LIFTS_MAX, verifyDocuments, withdrawn
 import { clientEntryId, entryKey, subjectKey } from "../lib/model.mjs";
 import { listProblemsIntroduced, tryAct, unsignable } from "../lib/pipeline.mjs";
 import { loadState } from "../lib/state.mjs";
-import { applyPlan, planReleases } from "../lib/promote.mjs";
+import { applyPlan, planReleases, unconfiguredNotice } from "../lib/promote.mjs";
 import { act, candidate, FOO_DESCRIPTOR, makeCatalogue, T0 } from "./catalogue.mjs";
 
 const GI = { slug: "peak-gi", repo_id: 920000001, account: "author" };
@@ -195,6 +195,18 @@ test("M_PROMOTE lists a first-party prerelease, and promote.yml's plan then make
   c.sign({ acts: [act("M_REVOKE", { repo_id: 1409552680, versions: "*", reason_code: "security" })] });
   const plan2 = planReleases({ index: c.dist("games-index.json").signed, withdrawn: c.dist("games-withdrawn.json").signed, firstParty });
   assert.deepEqual(plan2.map((p) => p.want_prerelease), [true]);
+});
+
+test("promote.yml without the first-party App: the notice counts what the plan would have done, and nothing is applied", () => {
+  const c = seeded();
+  c.sign({ acts: [ACTS.M_PROMOTE()] });
+  const firstParty = JSON.parse(fs.readFileSync(path.join(c.root, "first-party.json"), "utf8"));
+  const plan = planReleases({ index: c.dist("games-index.json").signed, withdrawn: c.dist("games-withdrawn.json").signed, firstParty });
+  assert.match(unconfiguredNotice(plan), /^promote not configured \(no PROMOTE_APP_ID .*\): 1 listed first-party release\(s\) left .*, 0 revoked one\(s\) not put back to prerelease$/);
+  c.sign({ acts: [act("M_REVOKE", { repo_id: 1409552680, versions: "*", reason_code: "security" })] });
+  const plan2 = planReleases({ index: c.dist("games-index.json").signed, withdrawn: c.dist("games-withdrawn.json").signed, firstParty });
+  assert.match(unconfiguredNotice(plan2), /: 0 listed first-party release\(s\) .*, 1 revoked one\(s\) not put back/);
+  assert.match(unconfiguredNotice([]), /: 0 listed .*, 0 revoked/);
 });
 
 test("M_RELEASE_HOLD accepts a changed hand: the listing is rebound to the repository's new owner", () => {

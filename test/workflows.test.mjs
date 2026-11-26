@@ -269,3 +269,16 @@ test("until the games service is live, no scheduled or chained job runs: ingest,
     assert.match(head, /vars\.GAMES_LIVE == 'true'/, `${file} ${job}: not gated on GAMES_LIVE`);
   }
 });
+
+test("promote.yml without the first-party App ends green with a warning; with it, the token is minted and the plan applied", () => {
+  const steps = read("promote.yml").split(/\n(?=      - )/);
+  const step = (name) => steps.find((x) => x.startsWith(`      - name: ${name}`)) ?? assert.fail(`no step ${name}`);
+  const unconfigured = step("Promote not configured");
+  assert.match(unconfigured, /\n        if: vars\.PROMOTE_APP_ID == ''\n/);
+  assert.match(unconfigured, /bin\/promote\.mjs .*--unconfigured\b/);
+  assert.doesNotMatch(unconfigured, /secrets\.|--apply/, "the unconfigured step holds no secret and applies nothing");
+  for (const name of ["Mint the first-party App token", "Promote and demote"]) {
+    assert.match(step(name), /\n        if: vars\.PROMOTE_APP_ID != ''\n/, `${name} runs only once the App is configured`);
+  }
+  assert.match(step("Promote and demote"), /--apply\b/);
+});
