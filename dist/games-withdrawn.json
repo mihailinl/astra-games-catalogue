@@ -3,16 +3,16 @@
   "signatures": [
     {
       "key_id": "astra-games-2026a",
-      "sig": "8VyWHe3wIACLZqCExBst0q/aVUz48cUDZdiYITQjqHa0z9cjuCFFyZTl8v6EHnGB70+1GuVS5empp/W9AQ6VAw=="
+      "sig": "vyoEDdGdb5goANRVlsUVHtYZXfMlQJk6xklXt129nLQCCYvYts7NaYSL5zhEndv+S7XP1lt0DZhpORrBO81eCQ=="
     }
   ],
   "signed": {
-    "expires_at": 1796409952,
-    "issued_at": 1795805152,
+    "expires_at": 1796411786,
+    "issued_at": 1795806986,
     "key_id": "games-current",
     "lifts": [],
     "rows": [],
     "schema": "astra.games.withdrawn/1",
-    "serial": 1795805152
+    "serial": 1795806986
   }
 }
