@@ -20,6 +20,10 @@ re-signed every day and on every change. A copy older than 7 days stops new
 installs and updates; Play and repair of what is already installed keep
 working on the last copy a client verified.
 
+**Making an integration, or finding out why Astra did not appear in a game?**
+Start at [`docs/AI-START.md`](docs/AI-START.md): it is written for the AI agent
+you hand Astra's brief to.
+
 ## The trust model, in plain words
 
 **A game integration is not sandboxed.** It is code that runs inside a game
