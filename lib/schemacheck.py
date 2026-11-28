@@ -70,7 +70,7 @@ contentlite.py), never restated here: the text-glTF sniff and the GLB name
 rule over EVERY entry, the `%?#\\` uri rule, the 16 MiB / depth-128 / 32 MiB
 caps and the .gltf byte-order-mark rule, and a whole embedded
 .astrachar/.astrapack through `ingest_bundle` (walk_zip, ingest-v1.md §3
-steps 1-8, 10, 11, 12), its refusal keeping content's own code.
+steps 1-8, 10, 11, 12) with `embedded_in_gi` set, its refusal keeping content's own code.
 test/content.test.mjs runs every testdata/games/content/releases/ golden
 (vendored) through this file and requires its vectors.json verdict.
 """
@@ -899,8 +899,12 @@ def bundle_verdict(path: str, raw: bytes, licence, budget=None) -> dict:
     # AstraPlugins #146: ingest_bundle's own `declared_licence` ctx key is now
     # {root: licence string}, not a bare set of roots -- one declared licence
     # on the astra-gi.toml entry stands for every pack root in the bundle.
+    # `embedded_in_gi`: every bundle judged here sits in a GI release, so step
+    # 10's animset-holds-a-clip rule exempts a pack whose every clip row is
+    # `builtin:` (ingest-v1.md §3 step 10; AstraPlugins #225)
     try:
-        got = _ingest_walked(raw, files, {"declared_licence": {root: licence for root in roots} if licence else {}})
+        got = _ingest_walked(raw, files, {"declared_licence": {root: licence for root in roots} if licence else {},
+                                          "embedded_in_gi": True})
     except CG.Refusal as r:
         return {"status": "bundle", "refusal": {"code": r.code, "detail": f"{path}!{r.detail}"}, "body": None}
     except Exception as e:  # noqa: BLE001 -- content's reader raised on a hostile shape: refuse, never crash
