@@ -29,6 +29,10 @@
     { "repository_id": 1409552539, "tag": "v0.2.2", "asset": "astra-gi.zip", "sha256": "d8492018c5b52625aabf9f45606f84297b60fe07e26c50b4d0665532b2609eaf" },
     { "repository_id": 1409552749, "tag": "v0.2.0", "asset": "astra-gi.zip", "sha256": "dd069578b7b2a3ccf7756e9054041a2b985800956296a840a1106a11f0827296" },
     { "repository_id": 1409552680, "tag": "v0.3.1", "asset": "astra-gi.zip", "sha256": "0fc9fe9443f1940517f185e260e02176439e08d1f5b18891496971fa7e23b73d" },
-    { "repository_id": 1409552609, "tag": "v0.2.0", "asset": "astra-gi.zip", "sha256": "bbdc6559904e17e1c4ac97aae021e96402abca78eea76ca651c91cd92fc18a38" }
+    { "repository_id": 1409552609, "tag": "v0.2.0", "asset": "astra-gi.zip", "sha256": "bbdc6559904e17e1c4ac97aae021e96402abca78eea76ca651c91cd92fc18a38" },
+    { "repository_id": 1409552539, "tag": "v0.2.3", "asset": "astra-gi.zip", "sha256": "1d6da8f73f41099ee6713cdc5ae66da7f8c1f82928d772f674948186927c883e" },
+    { "repository_id": 1409552749, "tag": "v0.2.1", "asset": "astra-gi.zip", "sha256": "baf01e94bc256355cfeb90d85a39176015fb2702a66dc12e820319433bd178c7" },
+    { "repository_id": 1409552680, "tag": "v0.3.2", "asset": "astra-gi.zip", "sha256": "7315372765c2f7c54f52d7d25ab6c0b9f027ab60c0ab1ce86f274b5794eeba12" },
+    { "repository_id": 1409552609, "tag": "v0.2.1", "asset": "astra-gi.zip", "sha256": "933f1962c4019ebe7044c50903143c0fbadef8805278f206044e8964a66f74f1" }
   ]
 }
