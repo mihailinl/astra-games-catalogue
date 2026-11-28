@@ -14,7 +14,7 @@ import { test } from "node:test";
 import { verifyEnvelope, publicKeyFromBase64 } from "../lib/vendor/astra-registry/bot/lib/sign.mjs";
 import { bodyProblemsMany, declaredMembers, INDEX_SCHEMA, signatureCheck, successorProblems, verifyDocument, verifyEnvelopeAll, WITHDRAWN_SCHEMA, buildIndexBody } from "../lib/documents.mjs";
 import { LIFT_KEEP_SECONDS, LIFTS_MAX } from "../lib/model.mjs";
-import { lastWithdrawn, listProblemsIntroduced, tryAct } from "../lib/pipeline.mjs";
+import { lastWithdrawn, listProblemsIntroduced, syncFirstPartyBindings, tryAct } from "../lib/pipeline.mjs";
 import { actsUnaccounted } from "../lib/acts.mjs";
 import { verifyingKeys } from "../lib/trust.mjs";
 import { validateMany } from "../lib/schemas.mjs";
@@ -790,4 +790,56 @@ test("the trial refuses, as an act, one whose applying drops what the last list 
   assert.throws(() => signBoth({ state: lost, seedLoaders: { loaders: [] }, signers, kindKeys: c.kindKeys, now: T0, previous }), /^Error: E_SELF_VERIFY: withdrawn: sticky-row-vanished: /);
   assert.throws(() => signBoth({ state: lost, seedLoaders: { loaders: [] }, signers, kindKeys: c.kindKeys, now: T0 }), /needs the withdrawn list published last/);
   assert.equal(signBoth({ state, seedLoaders: { loaders: [] }, signers, kindKeys: c.kindKeys, now: T0, previous }).withdrawn.signed.rows.length, 1);
+});
+
+// ── first-party repositories in bindings.json, so the service polls them ──
+
+test("a sign run with nothing to sign writes one token-less row per first-party.json repository, the service mirror's shape", () => {
+  const c = makeCatalogue();
+  const fp = JSON.parse(fs.readFileSync(path.join(c.root, "first-party.json"), "utf8"));
+  const report = c.sign();
+  const rows = c.state("bindings.json");
+  assert.deepEqual(Object.keys(rows).sort(), fp.repos.map((r) => String(r.repository_id)).sort());
+  assert.deepEqual(report.firstPartyBound.sort(), fp.repos.map((r) => r.repository_id).sort());
+  for (const r of fp.repos) {
+    // plugins-server games/bindings.rs FileBinding: account, repo_id, repo_owner_id, binding_token, bound_at — the key
+    // is the repo_id, and a null binding_token is what the mirror reads as first party
+    assert.deepEqual(rows[String(r.repository_id)], { account: fp.publisher_account, repo_id: r.repository_id, repo_owner_id: r.repository_owner_id, binding_token: null, bound_at: T0, first_party: true });
+  }
+});
+
+test("first-party rows: a later run keeps bound_at, a repository taken out of first-party.json loses its row, community rows are untouched", () => {
+  const c = makeCatalogue();
+  c.sign();
+  const file = path.join(c.data, "bindings.json");
+  const community = { account: "author", repo_id: 930000001, repo_owner_id: 800000001, binding_token: "authorsToken_0123456789abcdef", bound_at: T0 };
+  writeJson(file, { ...c.state("bindings.json"), [String(community.repo_id)]: community });
+  const again = c.sign({ now: T0 + 60 });
+  assert.deepEqual(again.firstPartyBound, [], "nothing changed, nothing rewritten");
+  assert.equal(c.state("bindings.json")["1409552680"].bound_at, T0);
+
+  const fpFile = path.join(c.root, "first-party.json");
+  const fp = JSON.parse(fs.readFileSync(fpFile, "utf8"));
+  fs.writeFileSync(fpFile, JSON.stringify({ ...fp, repos: fp.repos.filter((r) => r.repository_id !== 1409552680) }));
+  const dropped = c.sign({ now: T0 + 120 });
+  assert.deepEqual(dropped.firstPartyBound, [1409552680]);
+  const rows = c.state("bindings.json");
+  assert.equal(rows["1409552680"], undefined);
+  assert.deepEqual(rows[String(community.repo_id)], community);
+  assert.equal(Object.keys(rows).length, fp.repos.length, "seven first-party rows and the community one");
+});
+
+test("first-party rows: a row with a token line, or with another owner id, on a first-party repository is replaced", () => {
+  const state = { bindings: {
+    "1409552680": { account: "someone", repo_id: 1409552680, repo_owner_id: 800000001, binding_token: "someonesToken_0123456789abcdef", bound_at: 1 },
+    "1409552749": { account: "mihailinl", repo_id: 1409552749, repo_owner_id: 1, binding_token: null, bound_at: 1, first_party: true },
+  } };
+  const fp = { publisher_account: "mihailinl", repos: [
+    { repository_id: 1409552680, repository_owner_id: 193032699 },
+    { repository_id: 1409552749, repository_owner_id: 193032699 },
+    { repository_id: 0, repository_owner_id: 193032699 },
+  ] };
+  assert.deepEqual(syncFirstPartyBindings(state, fp, T0), [1409552680, 1409552749]);
+  for (const id of ["1409552680", "1409552749"]) assert.deepEqual(state.bindings[id], { account: "mihailinl", repo_id: Number(id), repo_owner_id: 193032699, binding_token: null, bound_at: T0, first_party: true });
+  assert.equal(state.bindings["0"], undefined, "a row that is not a repository id is never written");
 });

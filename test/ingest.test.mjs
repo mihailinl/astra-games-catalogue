@@ -551,6 +551,16 @@ function firstPartyRun({ pins = [], zip = stagingZip(fixtureText("astra-gi.toml"
   }).then((c) => ({ c, gh, zip, probe }));
 }
 
+test("first-party: the token-less bindings.json row sign writes for it changes nothing in ingest", async () => {
+  const zip0 = (await firstPartyRun()).zip;
+  const pins = [{ repository_id: 1409552680, tag: "v1.0.0", asset: "astra-gi.zip", sha256: sha256(zip0) }];
+  const row = { account: "mihailinl", repo_id: 1409552680, repo_owner_id: 193032699, binding_token: null, bound_at: 1793000000, first_party: true };
+  const { c, gh } = await firstPartyRun({ pins, state: emptyState({ bindings: { "1409552680": row } }) });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  assert.equal(gh.calls.length, 0);
+  assert.deepEqual(c.entry.publisher, { account: "mihailinl", repo_id: 1409552680, repo_owner_id: 193032699 });
+});
+
 test("first-party: admitted by digest pin, with no attestation asked for", async () => {
   const zip0 = (await firstPartyRun()).zip;
   const { c, gh } = await firstPartyRun({ pins: [{ repository_id: 1409552680, tag: "v1.0.0", asset: "astra-gi.zip", sha256: sha256(zip0) }] });
