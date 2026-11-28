@@ -283,6 +283,28 @@ test("ingest-report: one ingest-result per lease that has a candidate, the proje
   assert.deepEqual(body.candidate.parts, [{ path: "art/a.png", kind: "art", sha256: H("c"), title: "A" }]);
 });
 
+test("ingest-report: ONE candidate artifact, which download-artifact extracts straight into the directory, is still reported (2026-11-28: every single-lease run said \"no candidate\" and the lease was re-leased forever)", async () => {
+  const dir = tmpdir();
+  fs.writeFileSync(path.join(dir, "candidate.json"), JSON.stringify({ schema: "astra.games.candidate/1", request: { lease_id: "L1", repo_id: 1, tag: "v1" }, verdict: "refuse", findings: [{ code: "E_PROBE", message: "x" }] }));
+  const service = fakeService({ ingestResult: { ok: true } });
+  const r = await ingestReport({ candidates: dir, env: { LEASES: '["L1"]' }, client: service, log: quiet });
+  assert.deepEqual(r, { posted: ["L1"], failed: [] });
+  assert.equal(service.calls[0][1].lease_id, "L1");
+});
+
+test("ingest-report: two candidates naming one lease post neither and fail the job", async () => {
+  const dir = tmpdir();
+  for (const d of ["games-candidate-L1", "games-candidate-L9"]) {
+    fs.mkdirSync(path.join(dir, d), { recursive: true });
+    fs.writeFileSync(path.join(dir, d, "candidate.json"), JSON.stringify({ schema: "astra.games.candidate/1", request: { lease_id: "L1", repo_id: 1, tag: "v1" }, verdict: "accept", findings: [] }));
+  }
+  const service = fakeService({ ingestResult: { ok: true } });
+  const r = await ingestReport({ candidates: dir, env: { LEASES: '["L1"]' }, client: service, log: quiet });
+  assert.deepEqual(r.posted, []);
+  assert.equal(r.failed.length, 1);
+  assert.equal(service.calls.length, 0);
+});
+
 test("ingest-report: a lease the service no longer holds is a warning; any other refusal, or a malformed lease, fails the job", async () => {
   const dir = tmpdir();
   fs.mkdirSync(path.join(dir, "games-candidate-L1"), { recursive: true });

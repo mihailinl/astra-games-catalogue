@@ -14,8 +14,9 @@
 //       <dir>/games-request-<lease>.json per lease and, to $GITHUB_OUTPUT,
 //       `leases` (a JSON list of lease ids) and `malformed` (a count)
 //   node bin/service.mjs ingest-report --candidates <dir>
-//       one astra.games.ingest-result/1 per lease in $LEASES whose
-//       <dir>/games-candidate-<lease>/candidate.json exists; fails the job
+//       one astra.games.ingest-result/1 per lease in $LEASES that has a
+//       candidate in <dir> (lib/candidates.mjs: either layout download-artifact
+//       writes), matched by its request.lease_id; fails the job
 //       (after posting the rest) on a refused post or MALFORMED > 0
 //   node bin/service.mjs sign-work --out <dir>
 //       GET bot/games/work into <dir>/acts.json and <dir>/health.json, and
@@ -37,6 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { githubApi } from "../lib/github.mjs";
+import { readCandidates } from "../lib/candidates.mjs";
 import { LEASE_ID } from "../lib/ingest.mjs";
 import {
   ingestResultBody, isUnavailable, leaseRequests, MAX_LEASES, pollReleases, readLeases, readWork, registerBody, serviceClient, ServiceRefused, signResultBody, signUnnamed,
@@ -117,17 +119,27 @@ export async function ingestReport({ candidates, env = process.env, client = ser
   if (!Array.isArray(leases) || !leases.every((l) => typeof l === "string" && LEASE_ID.test(l))) throw new Error("LEASES is not a list of lease ids");
   const failed = [];
   const posted = [];
+  // by the lease each candidate names: a run with ONE candidate artifact gets
+  // it as <dir>/candidate.json, with no games-candidate-<lease>/ around it
+  const byLease = new Map();
+  for (const candidate of readCandidates(candidates)) {
+    const named = candidate?.request?.lease_id;
+    if (typeof named !== "string" || !leases.includes(named)) {
+      failed.push(`a candidate names lease ${JSON.stringify(named)}, which this run did not lease`);
+    } else if (byLease.has(named)) {
+      failed.push(`${named}: more than one candidate names this lease`);
+      byLease.set(named, null);
+    } else {
+      byLease.set(named, candidate);
+    }
+  }
   for (const lease of leases) {
-    const file = path.join(candidates, `games-candidate-${lease}`, "candidate.json");
-    if (!fs.existsSync(file)) {
+    const candidate = byLease.get(lease);
+    if (candidate === undefined) {
       log.warn(`lease ${lease}: no candidate (its ingest job broke); the lease expires and is leased again`);
       continue;
     }
-    const candidate = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (candidate?.request?.lease_id !== lease) {
-      failed.push(`${lease}: the candidate names lease ${JSON.stringify(candidate?.request?.lease_id)}`);
-      continue;
-    }
+    if (candidate === null) continue;
     try {
       await client.ingestResult(ingestResultBody(lease, candidate));
       posted.push(lease);

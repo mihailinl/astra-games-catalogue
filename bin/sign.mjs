@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { runSign } from "../lib/pipeline.mjs";
+import { readCandidates } from "../lib/candidates.mjs";
 import { checkSignable } from "../lib/service.mjs";
 import { writeJson } from "../lib/state.mjs";
 import { ROOT } from "../lib/vendored.mjs";
@@ -40,16 +41,7 @@ import { ROOT } from "../lib/vendored.mjs";
 const args = process.argv.slice(2);
 const opt = (n) => (args.indexOf(n) >= 0 ? args[args.indexOf(n) + 1] : null);
 
-/** Candidate files: <dir>/*.json, and <dir>/<artifact>/candidate.json (download-artifact by pattern). */
-export function readCandidates(dir) {
-  if (!dir || !fs.existsSync(dir)) return [];
-  const files = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (e.isFile() && e.name.endsWith(".json")) files.push(path.join(dir, e.name));
-    else if (e.isDirectory() && fs.existsSync(path.join(dir, e.name, "candidate.json"))) files.push(path.join(dir, e.name, "candidate.json"));
-  }
-  return files.map((f) => JSON.parse(fs.readFileSync(f, "utf8")));
-}
+export { readCandidates } from "../lib/candidates.mjs";
 
 /**
  * The oldest signable list the signer acts on: 20 minutes, under the service's requeue grace (45 min
