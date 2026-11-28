@@ -11,6 +11,11 @@
 # Its token is a GitHub App's, minted per run, limited to contents:write on
 # the first-party repositories; the App's private key is in the
 # `first-party-promote` environment. No signing secret is here.
+#
+# Until that App is set up (vars.PROMOTE_APP_ID is empty) the run does not
+# fail after every Sign: it still verifies the documents and makes the plan,
+# then ends green with one warning saying how many releases were left as
+# they are. Nothing changes once the variable is set.
 
 name: Promote
 
@@ -63,8 +68,13 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Promote not configured (no first-party App yet)
+        if: vars.PROMOTE_APP_ID == ''
+        run: node bin/promote.mjs --data catalogue-data --trust registry/registry/v1/trust.json --unconfigured
+
       - name: Mint the first-party App token
         id: app
+        if: vars.PROMOTE_APP_ID != ''
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.PROMOTE_APP_ID }}
@@ -74,6 +84,7 @@ jobs:
           permission-contents: write
 
       - name: Promote and demote
+        if: vars.PROMOTE_APP_ID != ''
         env:
           GH_APP_TOKEN: ${{ steps.app.outputs.token }}
         run: node bin/promote.mjs --data catalogue-data --trust registry/registry/v1/trust.json --apply
