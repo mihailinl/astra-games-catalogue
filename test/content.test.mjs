@@ -703,6 +703,23 @@ test("E_CONTENT_FORMAT: an embedded .astrapack with no clip file under clips/ is
   assert.deepEqual(refusalsOf(runGolden(wave.files, wave.manifest)), [], "with its clips the same pack is not refused");
 });
 
+// AstraPlugins #225: a pack embedded in a GI release whose every [[clips]] row is
+// `builtin:` (clips compiled into the engine, no bytes) is exempt from step 10's
+// no-clip refusal, because a GI-embedded pack never enters the animsets index.
+// The mutation: one row naming clips/walk.fbx, which the pack lacks, is refused
+// again (bundle-animset-builtin-and-missing).
+test("E_CONTENT_FORMAT: an embedded all-builtin: .astrapack passes step 10, a mixed one is refused", () => {
+  const ok = releaseGolden("bundle-animset-builtin-only");
+  const r = runGolden(ok.files, ok.manifest);
+  assert.deepEqual(refusalsOf(r), [], JSON.stringify(r.findings));
+  assert.ok(!r.findings.some((f) => /no clip file/.test(f.message)), JSON.stringify(r.findings));
+
+  const mixed = releaseGolden("bundle-animset-builtin-and-missing");
+  const r2 = runGolden(mixed.files, mixed.manifest);
+  assert.deepEqual(refusalsOf(r2), [CODES.E_CONTENT_FORMAT], JSON.stringify(r2.findings));
+  assert.ok(r2.findings.some((f) => /no clip file/.test(f.message)), JSON.stringify(r2.findings));
+});
+
 // ── review fixes of AstraPlugins #129 (d79ba14 -> f3fc49e), ported ───────────
 
 /** Run python with lib/schemacheck.py importable as `sc`; returns its stdout parsed as JSON. */

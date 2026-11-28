@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at fc53101df3b229191cc865b07ca3d269c84da2bd, path testdata/games/content/vrm/gen.py.
+# VENDORED from mihailinl/AstraPlugins at 9501c2741fd2d2337dcfae8a405b26ae983d23ff, path testdata/games/content/vrm/gen.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -206,6 +206,8 @@ BUNDLE_COPIES = {
     "releases/bundle-gap-between-entries/characters/scout.astrachar": "hostile/gap-between-entries.astrachar",
     "releases/bundle-vrm0-licence-other/characters/scout.astrachar": "hostile/vrm0-licence-other.astrachar",
     "releases/bundle-animset-wave/packs/wave.astrapack": "valid/animset-wave.astrapack",
+    "releases/bundle-animset-builtin-only/packs/act.astrapack": "valid/animset-builtin-only-in-gi.astrapack",
+    "releases/bundle-animset-builtin-and-missing/packs/act.astrapack": "hostile/animset-builtin-and-missing-file-in-gi.astrapack",
     "releases/bundle-model-aiko/characters/aiko.astrachar": "valid/model-aiko.astrachar",
     "releases/bundle-renamed/packs/wave.zip": "valid/animset-wave.astrapack",
     "releases/bundle-audio-licence-undeclared/characters/scout.astrachar": "hostile/audio-licence-undeclared.astrachar",

@@ -1,0 +1,23 @@
+# VENDORED from mihailinl/AstraPlugins at 9501c2741fd2d2337dcfae8a405b26ae983d23ff, path testdata/games/content/releases/bundle-animset-builtin-only/astra-gi.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# content check golden: the content catalogue's animset-builtin-only-in-gi.astrapack, byte for byte, as an animations part: every clip row is builtin:, and a GI-embedded pack never enters the animsets index -- accepted.
+schema = 1
+
+[integration]
+id = "someone.bundle-animset-builtin-only"
+name = "Bundle Animset Builtin Only"
+version = "0.1.0"
+license = "MIT"
+
+[[integration.content]]
+path = "packs/act.astrapack"
+kind = "animations"
+title = "act"
+credit = "someone"
+licence = "CC0-1.0"
+
+[target]
+exe = "*"
+platforms = ["windows-x64"]
+anti_cheat = "none"
