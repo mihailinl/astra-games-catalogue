@@ -119,6 +119,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     // signed, but a person should know (signing.mjs droppedCoSigners); an annotation in Actions
     for (const w of report.warnings ?? []) console.error(`${process.env.GITHUB_ACTIONS === "true" ? "::warning::" : "warning: "}${w}`);
+    if (report.firstPartyBound?.length) console.log(`first-party bindings written for ${report.firstPartyBound.join(", ")}: the plugins service polls these repositories from this commit of data`);
     for (const l of report.leftOut) console.log(`candidate ${l.lease_id ?? "(no lease)"} left out: ${l.reason}; it is not settled, and nothing listed moves`);
     for (const d of report.duplicateActs) console.log(`act ${d.ref} (${d.type}) was already applied as seq ${d.seq}; not applied again`);
     for (const r of report.refusedActs) console.error(`act refused: ${r.ref ?? "(no ref)"} ${r.type}: ${r.problems.join("; ")}`);
