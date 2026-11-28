@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// A FAKE gi-probe 0.5.1, for the tests: what lib/probe.mjs runs in place of
+// A FAKE gi-probe 0.7.0, for the tests: what lib/probe.mjs runs in place of
 // the real binary, which no test and no part of this work ever executes.
 //
-// It reads its command line as main.rs does (test/gi-probe-v051.mjs
+// It reads its command line as main.rs does (test/gi-probe-v070.mjs
 // parseLikeMain, from main.rs l.400-543) and answers a wrong one as main.rs
 // does — exit 2, `{schema, tool, subcommand, error{code: "usage", detail}}`
 // on stdout (main.rs l.562-579). A right one gets a report of exactly the
-// keys 0.5.1 writes, in its order (main.rs l.278-343). The command line is
-// byte identical to 0.5.0's (test/gi-probe-v051.mjs's module doc); what grew
-// is what check and validate-descriptor judge: `link.digest` (manifest.md
+// keys 0.7.0 writes (the same as 0.5.1's), in its order (main.rs l.278-343). The command line is
+// byte identical to 0.5.1's (test/gi-probe-v070.mjs's module doc); what grew
+// since 0.5.1 is what check judges: `[integration.link].knowledge` (link-invalid
+// {field=integration.link.knowledge, reason}, a test injects it through the
+// scenario's `findings`; this fake does not read the zip's folder, but step 3
+// is not skipped for a manifest that names only a knowledge folder). Since
+// 0.5.1: `link.digest` (manifest.md
 // §2.6.1), `descriptor.mods_loaders`, and TOML 1.0 / mods-invalid findings a
 // test injects directly through the scenario's `findings`/`patch` below —
 // this fake still reads with Python's tomllib (already strict TOML 1.0), so
@@ -63,7 +67,7 @@ import { fileURLToPath } from "node:url";
 import { jcs } from "../../lib/vendor/astra-registry/tools/lib/canonical.mjs";
 import {
   CHECK_STEPS, COMPAT_027, COMPAT_STEPS, HIJACK_NAMES, KEY_ORDER, NEGATIVE_FOLDERS, REPORT_SCHEMA, SPEC_SHA, TOOL, parseLikeMain,
-} from "../../test/gi-probe-v051.mjs";
+} from "../../test/gi-probe-v070.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -143,7 +147,7 @@ function readFile(file) {
 }
 
 /**
- * descriptor.rs l.500-513: its digest, codes, and (0.5.1) the ids of a valid
+ * descriptor.rs l.500-513: its digest, codes, and (0.5.1+) the ids of a valid
  * `mods`'s loaders in order — null without `mods`, [] for one this fake
  * treats as refused (not a table of `{loader: [{id, ...}, ...]}`; the real
  * launcher's reasons are spec §7.9's, which a test injects directly as a
@@ -230,7 +234,7 @@ function check(p, sc) {
     content: opened ? { content_files: [], parts: [], classes: {} } : null,
     steps: steps(CHECK_STEPS, findings, notices, {
       ...(m ? {} : { 2: "the zip holds no readable astra-gi.toml" }),
-      ...(linkFiles.length ? {} : { 3: "no [integration.link] files" }),
+      ...(linkFiles.length || typeof l?.knowledge === "string" ? {} : { 3: "no [integration.link] files" }),
       ...(descriptor ? {} : { 4: "no [integration.engine] the launcher reads" }),
       ...(p.opts.foundation ? {} : { 5: "no --foundation" }),
       ...(p.opts.previous ? {} : { 6: "no --previous" }),
