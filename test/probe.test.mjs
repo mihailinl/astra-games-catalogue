@@ -150,7 +150,11 @@ test("Link v1's consent members come from the table: talk, speaks (any event), l
   // and with no context, no talk, no speaking event and no low tool, they read false, false, false, 0
   const bare = { integration: { link: { shares_other_players: false, tools: [{ name: "x", description: "x", params: "p.json", result: "r.json", danger: "high" }], events: [{ name: "player_died", data: "e.json" }] } } };
   assert.deepEqual(linkOf(bare, { "p.json": "a".repeat(64), "r.json": "b".repeat(64), "e.json": "c".repeat(64) }).link,
-    { context: false, shares_other_players: false, skill_digest: null, digest: linkOf(bare, {}).link.digest, talk: false, speaks: false, low_tools: 0 });
+    { context: false, shares_other_players: false, skill_digest: null, digest: linkOf(bare, {}).link.digest, talk: false, speaks: false, low_tools: 0, game_tools: 0, knowledge_digest: null, knowledge_licence: null });
+  // danger = "game" is counted on its own, apart from "low" (a consent sheet said "0 game actions" for a GI with them)
+  const game = readTomlFile(path.join(ROOT, "lib/vendor/astraplugins/testdata/games/manifests/valid/link-danger-game.toml")).manifest;
+  const gl = linkOf(game, Object.fromEntries(JSON.stringify(game.integration.link).match(/[\w./-]+\.json/g).map((n) => [n, "a".repeat(64)])));
+  assert.deepEqual({ low: gl.link.low_tools, game: gl.link.game_tools }, { low: 2, game: 2 }, JSON.stringify(gl.problems));
 });
 
 test("what gi-probe does not report comes from the catalogue's own reading (independent of link.digest, 0.5.1+): schema_digests, game files", () => {
@@ -166,7 +170,7 @@ test("what gi-probe does not report comes from the catalogue's own reading (inde
   // manifest.md §2.6.1: digest is SHA-256(JCS([integration.link] as parsed)); vectors.json's "game-specific-link" vector pins this exact value
   // Link v1 (games-index-v1.md §2.1): `context` is true because the table NAMES a context schema; talk,
   // speaks and low_tools are written even when false/0.
-  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64), digest: "6163886130696822d12248f4f7342e427b72d7808daab8ebc8cec050e4f77a2b", talk: false, speaks: false, low_tools: 0 });
+  assert.deepEqual(l.link, { context: true, shares_other_players: false, skill_digest: "1".repeat(64), digest: "6163886130696822d12248f4f7342e427b72d7808daab8ebc8cec050e4f77a2b", talk: false, speaks: false, low_tools: 0, game_tools: 0, knowledge_digest: null, knowledge_licence: null });
   // ... and the context and result schemas are named schemas, so their bytes are in schema_digests
   assert.deepEqual(l.schemaDigests, {
     "astra/context.json": "6".repeat(64), "astra/tools/drop_item.json": "2".repeat(64), "astra/tools/drop_item.result.json": "7".repeat(64),

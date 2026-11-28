@@ -7,6 +7,7 @@
 // gi-probe never lets a release through.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
@@ -14,7 +15,7 @@ import { test } from "node:test";
 import { bindingTokenSha256, ingestRelease, parseRequest } from "../lib/ingest.mjs";
 import { descriptorDigest } from "../lib/model.mjs";
 import { binaryProbe } from "../lib/probe.mjs";
-import { loadReserved, readTomlFile } from "../lib/schemas.mjs";
+import { folderPartDigest, loadReserved, readTomlFile } from "../lib/schemas.mjs";
 import { MAX_PARTS, projectCandidate } from "../lib/service.mjs";
 import { emptyModeration } from "../lib/state.mjs";
 import { PIN_051, ROOT, fakeGh, fakeGithub, fakeProbe, fakeSteam, fixture, fixtureText, makeZip, makeZipBytes, seedLoaders, sha256, tmpdir } from "./helpers.mjs";
@@ -285,6 +286,22 @@ test("[integration.link] gets a digest (manifest.md §2.6.1), and gi-probe check
   // a probe reporting no digest at all (0.5.0's shape) is read as before: no comparison, still accept
   const noDigest = await run({ zip, probe: fakeProbe({ check: { patch: { link: { digest: undefined } } } }) });
   assert.equal(noDigest.verdict, "accept", JSON.stringify(noDigest.findings));
+});
+
+test("a GI with a knowledge folder gets knowledge_digest = the folder's part digest and its licence; one without reads null", async () => {
+  const text = fixtureText("astra-gi.toml") + ["", "[integration.link]", "shares_other_players = false", 'knowledge = "astra/knowledge"', 'knowledge_licence = "CC-BY-SA-4.0"', ""].join("\n");
+  const kb = { "astra/knowledge/a.md": "# A\nfirst", "astra/knowledge/sub/b.md": "# B\nsecond" };
+  const c = await run({ zip: makeZip({ "astra-gi.toml": text, "BepInEx/plugins/Staging.dll": "not really a dll", ...kb }) });
+  assert.equal(c.verdict, "accept", JSON.stringify(c.findings));
+  // part-digest-v1.md §2: [path below the folder, sha256] pairs by UTF-8 byte order, JCS, SHA-256
+  const pairs = [["a.md", sha256(Buffer.from(kb["astra/knowledge/a.md"]))], ["sub/b.md", sha256(Buffer.from(kb["astra/knowledge/sub/b.md"]))]];
+  assert.equal(c.entry.link.knowledge_digest, sha256(Buffer.from(JSON.stringify(pairs))));
+  assert.equal(c.entry.link.knowledge_licence, "CC-BY-SA-4.0");
+  assert.equal(c.entry.link.game_tools, 0);
+  // a link table with no knowledge: both null, never absent
+  const bare = await run({ zip: stagingZip(fixtureText("astra-gi.toml") + ["", "[integration.link]", "talk = true", ""].join("\n")) });
+  assert.equal(bare.entry.link.knowledge_digest, null);
+  assert.equal(bare.entry.link.knowledge_licence, null);
 });
 
 test("a VAC game and a game a moderator refused are refused; an online game is only flagged", async () => {
@@ -819,4 +836,18 @@ test("first-party: a 0.2.7 source of its own repository runs compat (R30); compa
   const probe2 = fakeProbe();
   await run({ probe: probe2 });
   assert.ok(!probe2.calls.some((a) => a[0] === "compat"));
+});
+
+test("a knowledge folder over 64 MiB is refused by its declared size, before an entry is inflated", () => {
+  // review finding: the cap was checked after z.read(), so one huge entry was inflated in full first
+  const zip = path.join(tmpdir("kb-cap-"), "big.zip");
+  execFileSync("python3", ["-c", [
+    "import sys, zipfile",
+    "with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:",
+    "    z.writestr('astra/knowledge/small.md', 'ok')",
+    "    z.writestr('astra/knowledge/zeros.bin', bytes(65 * 1024 * 1024))",
+  ].join("\n"), zip]);
+  const r = folderPartDigest(zip, "astra/knowledge");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /holds more than 67108864 bytes/);
 });

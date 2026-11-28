@@ -21,6 +21,9 @@ Nothing here re-implements a keyword; this file only moves JSON in and out.
          | {"ok": false, "error": "..."}
     python3 lib/schemacheck.py zipcheck ZIP
         -> {"ok": true} | {"ok": false, "error": "..."}   (Zip Cloaking, see verify_zip_headers)
+    python3 lib/schemacheck.py partdigest ZIP FOLDER
+        -> {"ok": true, "digest": "<64 hex>", "files": N} | {"ok": false, "error": "..."}
+           (the part digest of the zip's FOLDER, part-digest-v1.md, by contentlite.part_digest)
     python3 lib/schemacheck.py files ZIP
         -> {"ok": true, "files": {"<path in zip>": "<sha256>", ...}} | {"ok": false, "error": "..."}
 
@@ -1556,6 +1559,41 @@ def zip_files(zip_path):
     return {"ok": True, "files": out}
 
 
+PART_DIGEST_READ_MAX = 64 * 1024 * 1024
+
+
+def part_digest_of_folder(zip_path, folder):
+    """The part digest (part-digest-v1.md) of the zip's `folder`, by contentlite's own
+    part_digest (the content catalogue's implementation, never restated): paths below the
+    folder, entry names read as zip_files reads them. link-v1.md §5 "Knowledge" signs the
+    knowledge folder with it as `link.knowledge_digest`."""
+    root = folder.replace("\\", "/").strip("/")
+    if root == "":
+        return {"ok": False, "error": "the folder is empty"}
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            files = {}
+            total = 0
+            for info in z.infolist():
+                name = info.filename.replace("\\", "/")
+                if info.is_dir() or not name.startswith(root + "/"):
+                    continue
+                # The header's size bounds the read (ZipExtFile stops at file_size), so the cap is
+                # checked before an entry is inflated, not after one huge entry already was.
+                total += info.file_size
+                if total > PART_DIGEST_READ_MAX:
+                    return {"ok": False, "error": f"{folder} holds more than {PART_DIGEST_READ_MAX} bytes"}
+                files[name] = z.read(info)
+    except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError, EOFError, zlib.error) as e:
+        return {"ok": False, "error": f"not a readable zip: {e}"}
+    if not files:
+        return {"ok": False, "error": f"{folder} holds no file"}
+    try:
+        return {"ok": True, "digest": CG.C.part_digest(files, root=root), "files": len(files)}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+
 def toml_file(path):
     try:
         with open(path, "rb") as f:
@@ -1584,6 +1622,9 @@ def main(argv):
         return 0
     if len(argv) == 3 and argv[1] == "files":
         json.dump(zip_files(argv[2]), sys.stdout, ensure_ascii=False)
+        return 0
+    if len(argv) == 4 and argv[1] == "partdigest":
+        json.dump(part_digest_of_folder(argv[2], argv[3]), sys.stdout, ensure_ascii=False)
         return 0
     if len(argv) == 3 and argv[1] == "zipcheck":
         json.dump(verify_zip_headers(argv[2]), sys.stdout, ensure_ascii=False)
