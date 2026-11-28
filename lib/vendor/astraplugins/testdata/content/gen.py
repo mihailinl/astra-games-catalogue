@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at fc53101df3b229191cc865b07ca3d269c84da2bd, path testdata/content/gen.py.
+# VENDORED from mihailinl/AstraPlugins at 9501c2741fd2d2337dcfae8a405b26ae983d23ff, path testdata/content/gen.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -1451,6 +1451,17 @@ def gen_archives() -> None:
     # the same picture in a 3D pack is a texture, not a clip: nothing to play, so nothing to list
     put("archives/hostile/animset-no-clips.astrapack", bundle(
         "astra.animpack", {"animpack.toml": ASCII_PART["animpack.toml"], "clips/sheet.png": THUMB}, body=None))
+    # step 10's GI exemption: every `[[clips]]` row is `builtin:` (no bytes to ship). Accepted only when
+    # the caller says the bundle is embedded in a game-integration release (`embedded_in_gi`)
+    builtin_rows = b'name = "act"\n\n[[clips]]\nname = "idle"\nfile = "builtin:nayu-anims/idle.fbx"\n\n' \
+                   b'[[clips]]\nname = "wave"\nfile = "builtin:nayu-anims/wave.fbx"\n\n[states.idle]\n\n[states.wave]\n'
+    put("archives/valid/animset-builtin-only-in-gi.astrapack", bundle(
+        "astra.animpack", {"animpack.toml": builtin_rows}, body=None))
+    put("archives/hostile/animset-builtin-and-missing-file-in-gi.astrapack", bundle(
+        "astra.animpack", {"animpack.toml": builtin_rows + b'\n[[clips]]\nname = "walk"\nfile = "clips/walk.fbx"\n'},
+        body=None))
+    put("archives/hostile/animset-no-clip-rows-in-gi.astrapack", bundle(
+        "astra.animpack", {"animpack.toml": b'name = "act"\n\n[states.idle]\n'}, body=None))
     # the manifest's own top-level `kind` is passed to agree with the derived one (`art`),
     # the same way ASCII_PART's goldens pass `kind="vrm"` to agree with `animations`
     put("archives/valid/animset-pixel.astrapack", bundle("astra.animpack", pixel_part, body=None, kind="pixel"))

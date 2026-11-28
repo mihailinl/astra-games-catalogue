@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at fc53101df3b229191cc865b07ca3d269c84da2bd, path tools/check-content-goldens.py.
+# VENDORED from mihailinl/AstraPlugins at 9501c2741fd2d2337dcfae8a405b26ae983d23ff, path tools/check-content-goldens.py.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 #!/usr/bin/env python3
@@ -1681,6 +1681,23 @@ def animset_states(part: dict[str, bytes], part_kind: str) -> list[str]:
     return sorted({n for n in names if STATE_NAME.match(n)})[:MAX_STATES]
 
 
+def all_clips_builtin(part: dict[str, bytes]) -> bool:
+    """True when `animpack.toml` has at least one `[[clips]]` row and EVERY row's
+    `file` is a string starting `builtin:` (a clip compiled into the engine: no
+    bytes to ship). Why it exists: step 10 refuses an animset with no clip file
+    because its animsets-index entry's `clips` must be 1-4096; a pack embedded in
+    a game-integration release never enters that index, so an all-`builtin:`
+    pack is exempt there. A mixed pack, or one with no rows, is not.
+    `animpack.toml` already parsed at step 8; this never refuses."""
+    raw = part.get("animpack.toml")
+    if raw is None:
+        return False
+    rows = tomllib.loads(raw.decode("utf-8")).get("clips")
+    return (isinstance(rows, list) and bool(rows)
+            and all(isinstance(r, dict) and isinstance(r.get("file"), str) and r["file"].startswith("builtin:")
+                    for r in rows))
+
+
 def ingest_bundle(raw: bytes, ctx: dict) -> dict:
     files, man = read_bundle(raw)
     listed = man.get("files") or {}
@@ -1743,9 +1760,12 @@ def ingest_bundle(raw: bytes, ctx: dict) -> dict:
             raise Refusal("E_CONTENT_TOO_LARGE", body)
     # step 10, last: an animset (a `.astrapack`, ONE pack at the zip root) holds at least one clip
     # file. Its index entry's `clips` is 1-4096 (animsets-index-v1.md §2.1), so a pack with none
-    # could be accepted, confirmed and reviewed and then never listed.
+    # could be accepted, confirmed and reviewed and then never listed. EXEMPT: a pack embedded in a
+    # game-integration release (`ctx["embedded_in_gi"]`) whose every clip row is `builtin:` -- it
+    # never enters that index (`all_clips_builtin`).
     animset_kind = pack_kind(man, files)
-    if animset_kind is not None and not clip_files(files, animset_kind):
+    if (animset_kind is not None and not clip_files(files, animset_kind)
+            and not (ctx.get("embedded_in_gi") and all_clips_builtin(files))):
         raise Refusal("E_CONTENT_FORMAT", "an animset with no clip file under clips/")
     check_settings(files, settings_dir)  # after the format loop, matching the server (bundle.rs) -- S2 moved only the size caps
     kind_of = {f: pk for (pk, _root), pf in
