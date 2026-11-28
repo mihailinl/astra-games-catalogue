@@ -1,4 +1,4 @@
-# VENDORED from mihailinl/AstraPlugins at f87d53da52dee4fcd300e36eb9f4a6e208dcf001, path testdata/games/manifests/invalid/link-event-unknown-word.toml.
+# VENDORED from mihailinl/AstraPlugins at fc53101df3b229191cc865b07ca3d269c84da2bd, path testdata/games/manifests/invalid/link-event-unknown-word.toml.
 # Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
 # END OF VENDOR HEADER
 # Invalid: an event whose name is not one of link-v1.md §5's closed v1 words ("Event words").
