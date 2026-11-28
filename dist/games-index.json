@@ -3,16 +3,16 @@
   "signatures": [
     {
       "key_id": "astra-games-2026a",
-      "sig": "zrXm1hXk1+7DfyR0to5s835eHvjKbkjHHT9SYvsV5qgX2TLK9oqL9RUt+9ImNL5+wPfycHAoTa1JW80iv545Ag=="
+      "sig": "GOvoY2doAP6HIUOJWigqe1aNA11L9eNc9pA0osjkYrxIiOnF42nHIoGSSJoP62DtAApqg71iyWvWvgx+Iwp3Cw=="
     }
   ],
   "signed": {
     "anticheat": [],
     "engine_codes": {},
     "entries": [],
-    "expires_at": 1796450478,
+    "expires_at": 1796452323,
     "games": [],
-    "issued_at": 1795845678,
+    "issued_at": 1795847523,
     "key_id": "games-current",
     "loaders": [
       {
@@ -22,6 +22,6 @@
       }
     ],
     "schema": "astra.games.index/1",
-    "serial": 1795845678
+    "serial": 1795847523
   }
 }
