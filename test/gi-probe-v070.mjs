@@ -1,54 +1,55 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// gi-probe 0.5.1's interface, FROZEN from astra-game-launcher tag v0.5.1
-// (ede231babfc101df6c57e4a56bd4e346d233efb7) by reading its source —
-// `git show v0.5.1:<path>` — on 2026-11-02. No gi-probe binary was run to
-// write this, and none is run by the tests: fixtures/gi-probe/fake-gi-probe.mjs
-// answers in its place, and test/probe.test.mjs holds lib/probe.mjs's command
-// lines to what this file says main.rs accepts.
+// gi-probe 0.7.0's interface, FROZEN from astra-game-launcher tag v0.7.0
+// (417e57d) by reading its source — `git show v0.7.0:<path>` — on 2026-11-28.
+// No gi-probe binary was run to write this, and none is run by the tests:
+// fixtures/gi-probe/fake-gi-probe.mjs answers in its place, and
+// test/probe.test.mjs holds lib/probe.mjs's command lines to what this file
+// says main.rs accepts.
 //
-// What changed from test/gi-probe-v050.mjs (diffed source, not run): the CLI
-// surface below — every subcommand, its options, flags, positional count and
-// `need`s — is BYTE IDENTICAL to 0.5.0's; only comments and doc text moved
-// (main.rs grew by three lines: a `mod toml10;` and two doc-text words). What
-// changed is what `check` and `validate-descriptor` now JUDGE, never what
-// they ACCEPT on the command line:
-//   - the manifest and a descriptor are held to TOML 1.0, as the
-//     specification parses them: TOML 1.1 syntax (`\e`, `\xHH`, a multi-line
-//     inline table, a trailing comma, a time without seconds) or a leading
-//     byte-order mark is `manifest-invalid{reason=toml-1.0}` /
-//     `descriptor-invalid{reason=toml-1.0}` (`src/bin/gi-probe/toml10.rs`),
-//     and the report's digests (`link.digest`, `descriptor.sha256`) `null`;
-//   - `[integration.link]`'s consent digest is reported as `link.digest`
-//     (manifest.md §2.6.1); a table it cannot digest is `link-invalid{reason=
-//     not-digestable}` and the digest `null`;
-//   - a descriptor's `mods` (spec §7) is judged, not merely accepted:
-//     anything wrong inside it is `mods-invalid{field, reason}` (§7.9's
-//     reasons), and the descriptor is refused for it, as ingest refuses it; a
-//     client that reads a descriptor with `mods` wrong drops only `mods`.
-//     `descriptor.mods_loaders` names a valid `mods`'s loader ids in order
-//     (`null` without `mods`, `[]` for one refused);
-//   - content round 3 (AstraPlugins #129: a game's own archive opened one
-//     level deep, an embedded `.astrachar`/`.astrapack` judged by the content
-//     catalogue's own ingest_bundle codes) is now `check`'s own step 8
-//     finding/notice, not only the catalogue's separate reading of the zip.
+// What changed from 0.5.1 (diffed source, not run): under src/bin/gi-probe/
+// only check.rs differs (+131/-4); main.rs, compat.rs, descriptor.rs and
+// compat-0.2.7.json have no diff, and src/plan.rs's names list (HIJACK_NAMES)
+// is the same at the same lines. So the CLI surface below (every subcommand,
+// option, flag, positional count and `need`) and the report's top-level keys
+// and their order are BYTE IDENTICAL to 0.5.1's, and so is the `link`
+// section's shape ({digest, files, schemas_validated, why}). What changed is
+// what `check` JUDGES (link-v1 stage 2, link-v1.md §5 "Knowledge"):
+//   - step 3 now also judges `[integration.link].knowledge` (check.rs
+//     `knowledge_findings`, l.179-289): the folder must be in the zip (else
+//     link-invalid{reason=not-in-zip}; a FILE of that name is `not-a-folder`),
+//     hold only `.md` files of UTF-8 text (`not-markdown`, `not-utf8`), none a
+//     link (`link`), each at most 256 KiB and together at most 4 MiB
+//     (`too-large{limit, bytes}`), at most 256 files (`too-many{limit,
+//     count}`) and at most 4 folders deep (`too-deep{limit}`). Each is
+//     `link-invalid{field=integration.link.knowledge, reason, path?, ...}`
+//     with step 3; a manifest with only `knowledge` and no schema files no
+//     longer skips step 3;
+//   - step 3's text in the report's `steps` now ends "; the knowledge base
+//     within its limits" (CHECK_STEPS[2]);
+//   - 0.5.1 refused every manifest with `integration.link.knowledge*` keys as
+//     unknown keys (manifest-invalid); the library (src/**, 69 files changed)
+//     now parses them, which is why astra-valheim v0.2.9 went from 37
+//     findings to none.
+// 0.5.1's own changes (TOML 1.0, mods-invalid, content round 3, link.digest)
+// stay as they were; see git history of this file (gi-probe-v070.mjs).
 //
 // A re-pin (gi-probe.json) re-reads the new tag and edits this file in the
 // same pull request; with ASTRA_GAME_LAUNCHER_REPO set, probe.test.mjs
 // re-parses main.rs at the pinned tag and fails on any difference.
 
-export const TAG = "v0.5.1";
+export const TAG = "v0.7.0";
 
 /** `tool` of every report (main.rs l.270-276): Cargo.toml's version, build.rs's tree hash. */
 export const TOOL = Object.freeze({
-  version: "0.5.1",
-  // build.rs l.11-17's algorithm (unchanged from 0.5.0) over `git ls-tree -r
-  // v0.5.1` (515 files), recomputed from source
-  source_tree_sha256: "09a34a65ff200c9e313a8297efcdb5dc7c9db92c8deac0af3d671862d028ef46",
+  version: "0.7.0",
+  // build.rs l.11-17's algorithm over `git archive v0.7.0` (release.sh
+  // verified it three ways)
+  source_tree_sha256: "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
 });
 
-/** `spec.sha` (descriptor.rs l.60-63: tests/goldens/astraplugins/PIN at v0.5.1). */
+/** `spec.sha` (descriptor.rs l.60-63: tests/goldens/astraplugins/PIN at v0.7.0, unchanged from 0.5.1). */
 export const SPEC_SHA = "c7ae74ab89c200f52318a08dcf4095cd436b181f";
 
 /** main.rs l.49. */
@@ -58,8 +59,7 @@ export const REPORT_SCHEMA = "astra.gi-probe/1";
  * Every subcommand main.rs's `run` dispatches (l.449-543), with the options
  * that take a value and the flags its `Args::parse` call names, how many
  * positional arguments it takes, and the options it `need`s. Byte identical
- * to 0.5.0's ACCEPTS (see the module doc): no subcommand gained, lost or
- * reshaped an option or a flag between 0.5.0 and 0.5.1.
+ * to 0.5.1's ACCEPTS (see the module doc): main.rs has no diff.
  */
 export const ACCEPTS = Object.freeze({
   // main.rs l.454-474: Args::parse(rest, &["zip", "source", "tag", "asset", "sha256", "previous", "notes"], &["prerelease"]); no_positional; need zip, source, tag
@@ -126,10 +126,10 @@ export function parseLikeMain(argv) {
 }
 
 /**
- * src/bin/gi-probe/compat-0.2.7.json at v0.5.1 (sha256 81edbf0b…159c, byte
- * identical to 0.5.0's copy): the sources `compat --source` accepts
+ * src/bin/gi-probe/compat-0.2.7.json at v0.7.0 (sha256 81edbf0b…159c, byte
+ * identical to 0.5.1's copy): the sources `compat --source` accepts
  * (compat.rs l.142-150 refuses any other id, exit 2; compat.rs itself has no
- * diff at all between 0.5.0 and 0.5.1), with what compat reports of each
+ * diff at all between 0.5.1 and 0.7.0), with what compat reports of each
  * (`source`, compat.rs l.152-165) and `against` (l.167-169).
  */
 export const COMPAT_027 = Object.freeze({
@@ -154,7 +154,7 @@ export const COMPAT_027 = Object.freeze({
   ],
 });
 
-/** src/plan.rs l.269-298 at v0.5.1 (plan.rs has no diff at all from 0.5.0): the names mod loaders hijack-load by (check's `loaders.hijack_names`). */
+/** src/plan.rs l.269-298 at v0.7.0 (the list is unchanged from 0.5.1; plan.rs gained only the anti-cheat gate and Wine platform around it): the names mod loaders hijack-load by (check's `loaders.hijack_names`). */
 export const HIJACK_NAMES = Object.freeze([
   "winhttp.dll", "version.dll", "dwmapi.dll", "dxgi.dll", "d3d11.dll", "dinput8.dll",
   "xinput1_1.dll", "xinput1_2.dll", "xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll", "xinputuap.dll",
@@ -163,11 +163,11 @@ export const HIJACK_NAMES = Object.freeze([
   "opengl32.dll",
 ]);
 
-/** check.rs l.90-99: check's steps (byte identical text to 0.5.0's; only its line number moved). */
+/** check.rs l.94-103: check's steps (step 3 grew: the knowledge base). */
 export const CHECK_STEPS = Object.freeze([
   "the launcher opens the zip and parses its manifest",
   "identity, capabilities, what a community release may place and launch, Astra Link's limits, the foundation claim and the engine descriptor",
-  "every file [integration.link] names is in the zip, within its size",
+  "every file [integration.link] names is in the zip, within its size; the knowledge base within its limits",
   "the engine descriptor claims none of the spec's negative folders",
   "built on the foundation: every file it places, placed alike",
   "code changed since the previous release",
@@ -175,7 +175,7 @@ export const CHECK_STEPS = Object.freeze([
   "every animation, model, picture and sound is one declared part, whole, with a licence the VRM gate allows",
 ]);
 
-/** compat.rs l.76-83: compat's steps (compat.rs has no diff at all from 0.5.0). */
+/** compat.rs l.76-83: compat's steps (compat.rs has no diff at all from 0.5.1). */
 export const COMPAT_STEPS = Object.freeze([
   "launcher 0.3.1 opens the zip and parses its manifest",
   "Astra 0.2.7's check_manifest, and pick's tag and asset rule, for the source",
@@ -185,7 +185,7 @@ export const COMPAT_STEPS = Object.freeze([
   "the consent sheet's inputs are the previous release's",
 ]);
 
-/** descriptor.rs l.65-93: the spec's negative folders (`negative_folders[].folder`); unchanged from 0.5.0. */
+/** descriptor.rs l.65-93: the spec's negative folders (`negative_folders[].folder`); unchanged from 0.5.1. */
 export const NEGATIVE_FOLDERS = Object.freeze(["empty", "exe-only", "system-dlls", "steam-api-beside-exe"]);
 
 /** main.rs l.295-317: the report's top-level keys in reading order; others follow sorted, `findings` last. */

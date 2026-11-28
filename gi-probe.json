@@ -1,8 +1,8 @@
 {
-  "$comment": "The gi-probe build ingest runs (A§5.2 step 5; merged R28, R30): astra-game-launcher 0.5.1's static-pie musl Linux x86_64 binary, released 2026-11-02 with the owner's word (tag v0.5.1 on ede231b; spec pin c7ae74a). bin/fetch-gi-probe.mjs refuses a download whose digest differs. 0.5.1 implements games content round 3 itself (AstraPlugins #129, previously this catalogue's own check alone), judges a descriptor's `mods` (spec §7: mods-invalid, instead of only accepting the table), holds the manifest and a descriptor to TOML 1.0 as the specification parses them (manifest-invalid/descriptor-invalid{reason=toml-1.0}), and reports [integration.link]'s consent digest (link.digest, manifest.md §2.6.1).",
+  "$comment": "The gi-probe build ingest runs (A§5.2 step 5; merged R28, R30): astra-game-launcher 0.7.0's static-pie musl Linux x86_64 binary (tag v0.7.0 on 417e57d; spec pin c7ae74a, unchanged from 0.5.1), built from `git archive v0.7.0`. bin/fetch-gi-probe.mjs refuses a download whose digest differs. Link-v1 stage 2: `check` now also judges `[integration.link].knowledge` (link-v1.md §5 Knowledge: a folder of the zip, at most 256 .md files of UTF-8 text, each at most 256 KiB, together at most 4 MiB, at most 4 folders deep, no link) as link-invalid{field=integration.link.knowledge, reason=not-a-folder|not-in-zip|link|too-deep|not-markdown|too-large|not-utf8|too-many}; 0.5.1 refused every manifest carrying integration.link.knowledge* keys as unknown (astra-valheim v0.2.9: 37 findings, now 0). The CLI and the report's keys are unchanged from 0.5.1 (which implements games content round 3, mods-invalid, TOML 1.0 and link.digest).",
   "schema": "astra.games.gi-probe/1",
-  "source_tree_sha256": "09a34a65ff200c9e313a8297efcdb5dc7c9db92c8deac0af3d671862d028ef46",
-  "version": "0.5.1",
-  "url": "https://github.com/mihailinl/astra-game-launcher/releases/download/v0.5.1/gi-probe-linux-x64",
-  "sha256": "dd5e1a2708042222e52bbcaa477396480853c615aa209d78fd329451381bc4a9"
+  "source_tree_sha256": "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
+  "version": "0.7.0",
+  "url": "https://github.com/mihailinl/astra-game-launcher/releases/download/v0.7.0/gi-probe-linux-x64",
+  "sha256": "90d2e3f0a225c57509bf0d43142a228fad600b7f923ec9c2e6a4ccb214874856"
 }

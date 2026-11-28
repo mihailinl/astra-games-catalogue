@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Minice — https://minice.ai
 //
-// lib/probe.mjs against gi-probe 0.5.1's REAL interface: every command line
-// it builds is one main.rs at v0.5.1 accepts (test/gi-probe-v051.mjs, frozen
-// from `git show v0.5.1:src/bin/gi-probe/main.rs`), and anything that is not
+// lib/probe.mjs against gi-probe 0.7.0's REAL interface: every command line
+// it builds is one main.rs at v0.7.0 accepts (test/gi-probe-v070.mjs, frozen
+// from `git show v0.7.0:src/bin/gi-probe/main.rs`), and anything that is not
 // the pinned build's report of the input is ProbeUnavailable. No real
 // gi-probe runs here: fixtures/gi-probe/fake-gi-probe.mjs answers in its place.
 
@@ -18,8 +18,8 @@ import {
 } from "../lib/probe.mjs";
 import { gameFilesOf, linkOf } from "../lib/model.mjs";
 import { readTomlFile } from "../lib/schemas.mjs";
-import { ACCEPTS, COMPAT_027, TAG, TOOL, parseLikeMain } from "./gi-probe-v051.mjs";
-import { FAKE_GI_PROBE, PIN_051, ROOT, fakeProbe, makeZip, tmpdir } from "./helpers.mjs";
+import { ACCEPTS, COMPAT_027, TAG, TOOL, parseLikeMain } from "./gi-probe-v070.mjs";
+import { FAKE_GI_PROBE, PIN_070, ROOT, fakeProbe, makeZip, tmpdir } from "./helpers.mjs";
 
 /** Every command line lib/probe.mjs can build, one per shape. */
 function everyArgv() {
@@ -43,7 +43,7 @@ test(`every command line lib/probe.mjs builds is one gi-probe ${TAG}'s main.rs a
   }
   // capture and pick are never ingest's
   assert.deepEqual([...used].sort(), ["check", "compat", "validate-descriptor"]);
-  // and the frozen reading refuses what 0.5.1 refuses (main.rs l.419, l.541)
+  // and the frozen reading refuses what 0.7.0 refuses (main.rs l.419, l.541)
   assert.equal(parseLikeMain(["ingest", "--zip", "z", "--loaders", "l", "--json"]).ok, false);
   assert.equal(parseLikeMain(["check", "z", "--json"]).ok, false);
   assert.equal(parseLikeMain(["check", "--zip", "z"]).ok, false);
@@ -64,16 +64,16 @@ test("gi-probe.json pins the build the tests hold the fake to, and fetch-gi-prob
   const pin = readPin();
   assert.equal(pin.schema, "astra.games.gi-probe/1");
   assert.equal(pin.source_tree_sha256, TOOL.source_tree_sha256);
-  assert.ok(pin.version === null || pin.version === TOOL.version, "a re-pin re-reads the tag and re-freezes test/gi-probe-v051.mjs");
-  assert.deepEqual(PIN_051, TOOL);
+  assert.ok(pin.version === null || pin.version === TOOL.version, "a re-pin re-reads the tag and re-freezes test/gi-probe-v070.mjs");
+  assert.deepEqual(PIN_070, TOOL);
 });
 
-test("an unknown subcommand, as 0.5.1 answers it (exit 2, error.usage), is ProbeUnavailable", async () => {
+test("an unknown subcommand, as 0.7.0 answers it (exit 2, error.usage), is ProbeUnavailable", async () => {
   const probe = fakeProbe();
   const zip = path.join(tmpdir(), "astra-gi.zip");
   fs.writeFileSync(zip, makeZip({ "astra-gi.toml": "schema = 1\n" }));
   await assert.rejects(probe.run("ingest", ["ingest", "--zip", zip, "--loaders", "l.json", "--json"]), (e) => e instanceof ProbeUnavailable && /exit 2, usage: unknown subcommand "ingest"/.test(e.message));
-  // an option 0.5.1 does not know is the same (main.rs l.419)
+  // an option 0.7.0 does not know is the same (main.rs l.419)
   await assert.rejects(probe.run("check", ["check", zip, "--json"]), (e) => e instanceof ProbeUnavailable && /unknown option --json/.test(e.message));
   // --loaders that is not a bare array: exit 2, io (check.rs l.132-147)
   const obj = path.join(tmpdir(), "loaders.json");
@@ -83,30 +83,30 @@ test("an unknown subcommand, as 0.5.1 answers it (exit 2, error.usage), is Probe
 
 test("readReport: only the pinned build's report of the subcommand asked is read", () => {
   const ok = { schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "validate-descriptor", verdict: "pass", input: {}, spec: {}, descriptor: { sha256: "a".repeat(64), codes: {} }, negative_folders: [], notices: [], findings: [] };
-  const read = (r, code = 0, pin = PIN_051) => readReport("validate-descriptor", { stdout: typeof r === "string" ? r : JSON.stringify(r), code }, pin);
+  const read = (r, code = 0, pin = PIN_070) => readReport("validate-descriptor", { stdout: typeof r === "string" ? r : JSON.stringify(r), code }, pin);
   assert.equal(read(ok).descriptor.sha256, "a".repeat(64));
   const unavailable = (r, code, pin, why) => assert.throws(() => read(r, code, pin), (e) => e instanceof ProbeUnavailable, why);
-  unavailable("", 0, PIN_051, "empty stdout");
-  unavailable("not json", 1, PIN_051, "not JSON");
-  unavailable({ ...ok, schema: "astra.gi-probe/0" }, 0, PIN_051, "schema");
-  unavailable({ schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "validate-descriptor", error: { code: "usage", detail: "validate-descriptor takes one file" } }, 2, PIN_051, "exit 2");
-  unavailable(ok, 2, PIN_051, "exit 2 with a report");
-  unavailable(ok, 101, PIN_051, "a panic's exit");
-  unavailable({ ...ok, tool: { ...TOOL, version: "0.4.9" } }, 0, PIN_051, "version");
-  unavailable({ ...ok, tool: { version: "0.5.1" } }, 0, PIN_051, "no source tree");
+  unavailable("", 0, PIN_070, "empty stdout");
+  unavailable("not json", 1, PIN_070, "not JSON");
+  unavailable({ ...ok, schema: "astra.gi-probe/0" }, 0, PIN_070, "schema");
+  unavailable({ schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "validate-descriptor", error: { code: "usage", detail: "validate-descriptor takes one file" } }, 2, PIN_070, "exit 2");
+  unavailable(ok, 2, PIN_070, "exit 2 with a report");
+  unavailable(ok, 101, PIN_070, "a panic's exit");
+  unavailable({ ...ok, tool: { ...TOOL, version: "0.4.9" } }, 0, PIN_070, "version");
+  unavailable({ ...ok, tool: { version: "0.7.0" } }, 0, PIN_070, "no source tree");
   unavailable(ok, 0, { version: "0.5.2" }, "the pin moved");
-  unavailable({ ...ok, subcommand: "check" }, 0, PIN_051, "another subcommand");
-  unavailable(ok, 1, PIN_051, "exit 1 with a pass");
-  unavailable({ ...ok, verdict: "fail" }, 1, PIN_051, "fail without findings");
-  unavailable({ ...ok, findings: [{ code: "x", level: "error", message: "m" }], verdict: "fail" }, 1, PIN_051, "the old contract's finding");
-  unavailable({ ...ok, descriptor: null }, 0, PIN_051, "a pass without a descriptor");
+  unavailable({ ...ok, subcommand: "check" }, 0, PIN_070, "another subcommand");
+  unavailable(ok, 1, PIN_070, "exit 1 with a pass");
+  unavailable({ ...ok, verdict: "fail" }, 1, PIN_070, "fail without findings");
+  unavailable({ ...ok, findings: [{ code: "x", level: "error", message: "m" }], verdict: "fail" }, 1, PIN_070, "the old contract's finding");
+  unavailable({ ...ok, descriptor: null }, 0, PIN_070, "a pass without a descriptor");
   // a pin without source_tree_sha256 asks only the version
-  assert.equal(read({ ...ok, tool: { version: "0.5.1", source_tree_sha256: "0".repeat(64) } }, 0, { version: "0.5.1" }).verdict, "pass");
+  assert.equal(read({ ...ok, tool: { version: "0.7.0", source_tree_sha256: "0".repeat(64) } }, 0, { version: "0.7.0" }).verdict, "pass");
 });
 
 test("readReport: a toml-1.0 finding (0.5.1) nulls descriptor.sha256, and that report still reads — a PASSING report never may", () => {
   const ok = { schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "validate-descriptor", verdict: "pass", input: {}, spec: {}, descriptor: { sha256: "a".repeat(64), codes: {}, mods_loaders: null }, negative_folders: [], notices: [], findings: [] };
-  const read = (r, code = 0, pin = PIN_051) => readReport("validate-descriptor", { stdout: JSON.stringify(r), code }, pin);
+  const read = (r, code = 0, pin = PIN_070) => readReport("validate-descriptor", { stdout: JSON.stringify(r), code }, pin);
   const refused = {
     ...ok,
     verdict: "fail",
@@ -126,14 +126,31 @@ test("ingest's generic mapping (lib/ingest.mjs) never keys off a specific gi-pro
   // the interface layer alone: a report carrying mods-invalid is readable
   // (readReport does not reject or special-case it) and keeps the finding
   const ok = { schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "check", verdict: "fail", input: { kind: "zip", sha256: "a".repeat(64), provenance: "community" }, integration: null, descriptor: { sha256: "a".repeat(64), codes: {}, mods_loaders: [] }, loaders: null, steps: [], notices: [], findings: [{ code: "mods-invalid", step: 1, field: "integration.engine.mods.loader[0].id", detail: "mods (spec §7.9): ingest refuses the descriptor", params: { reason: "code-undeclared" } }] };
-  const r = readReport("check", { stdout: JSON.stringify(ok), code: 1 }, PIN_051);
+  const r = readReport("check", { stdout: JSON.stringify(ok), code: 1 }, PIN_070);
   assert.equal(r.findings[0].code, "mods-invalid");
+});
+
+test("a 0.7.0 knowledge link-invalid finding (link-v1 stage 2) reads, keeps its params and refuses like any other code", () => {
+  const knowledge = (reason, extra = {}) => ({ code: "link-invalid", step: 3, field: "integration.link.knowledge", detail: `[integration.link].knowledge: ${reason}`, params: { field: "integration.link.knowledge", reason, path: "astra/knowledge/big.md", ...extra } });
+  const failing = { schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "check", verdict: "fail", input: { kind: "zip", sha256: "a".repeat(64), provenance: "community" }, integration: { id: "a.b", version: "1.0.0" }, descriptor: null, loaders: { files: [] }, link: { digest: "b".repeat(64), files: 0, schemas_validated: false, why: "w" }, steps: [], notices: [], findings: [knowledge("too-large", { limit: "262144", bytes: "300000" }), knowledge("not-in-zip")] };
+  const r = readReport("check", { stdout: JSON.stringify(failing), code: 1 }, PIN_070);
+  assert.deepEqual(r.findings.map((f) => f.params.reason), ["too-large", "not-in-zip"]);
+  assert.equal(r.findings[0].params.limit, "262144");
+  // a refusal is a finding the exit code and verdict agree on, never a pass
+  assert.throws(() => readReport("check", { stdout: JSON.stringify({ ...failing, verdict: "pass" }), code: 0 }, PIN_070), (e) => e instanceof ProbeUnavailable);
+});
+
+test("a passing 0.7.0 check report whose link section carries the digest and the knowledge-era keys reads without ProbeUnavailable", () => {
+  const pass = { schema: "astra.gi-probe/1", tool: { ...TOOL }, subcommand: "check", verdict: "pass", input: { kind: "zip", sha256: "a".repeat(64), provenance: "community" }, integration: { id: "a.b", version: "1.0.0" }, descriptor: null, loaders: { files: [] }, link: { digest: "b".repeat(64), files: 2, schemas_validated: false, why: "w", knowledge: { folder: "astra/knowledge", files: 3, bytes: 1200 }, some_future_key: [1] }, steps: [], notices: [], findings: [] };
+  assert.equal(readReport("check", { stdout: JSON.stringify(pass), code: 0 }, PIN_070).verdict, "pass");
+  // still failing closed on a malformed report
+  assert.throws(() => readReport("check", { stdout: JSON.stringify({ ...pass, loaders: null }), code: 0 }, PIN_070), (e) => e instanceof ProbeUnavailable);
 });
 
 test("binaryProbe fails closed before it runs anything: no pin, no binary", async () => {
   await assert.rejects(binaryProbe({ env: { GI_PROBE: FAKE_GI_PROBE }, pin: { version: null } }).run("check", ["check", "z"]), ProbeUnavailable);
-  await assert.rejects(binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: PIN_051 }).run("check", ["check", "z"]), ProbeUnavailable);
-  await assert.rejects(binaryProbe({ env: { GI_PROBE: path.join(tmpdir(), "nothing-here") }, pin: PIN_051 }).run("check", ["check", "z"]), ProbeUnavailable);
+  await assert.rejects(binaryProbe({ env: { PATH: "", GI_PROBE: "" }, pin: PIN_070 }).run("check", ["check", "z"]), ProbeUnavailable);
+  await assert.rejects(binaryProbe({ env: { GI_PROBE: path.join(tmpdir(), "nothing-here") }, pin: PIN_070 }).run("check", ["check", "z"]), ProbeUnavailable);
 });
 
 test("Link v1's consent members come from the table: talk, speaks (any event), low_tools (tools with danger = low)", () => {
