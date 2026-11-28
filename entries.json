@@ -1,1 +1,479 @@
-[]
+[
+  {
+    "entry": {
+      "built_on": null,
+      "capabilities": [
+        "companion.presentation"
+      ],
+      "changes": {
+        "config_writes": true,
+        "game_files": [
+          {
+            "loader": "allowlisted",
+            "path": "winhttp.dll",
+            "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+          },
+          {
+            "loader": "none",
+            "path": "doorstop_config.ini",
+            "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+          }
+        ],
+        "launch": true,
+        "profile_files": true
+      },
+      "code_changed": false,
+      "content": [],
+      "descriptor": null,
+      "descriptor_sha256": null,
+      "engine_versions": null,
+      "flags": [],
+      "foundation": null,
+      "id": "mihailinl/astra-repo",
+      "kind": "integration",
+      "licence": "MIT",
+      "link": null,
+      "min_astra": "0.2.8",
+      "notes": {},
+      "publisher": {
+        "account": "mihailinl",
+        "repo_id": 1409552749,
+        "repo_owner_id": 193032699
+      },
+      "review": "unchecked",
+      "schema": 1,
+      "schema_digests": {},
+      "sdk": null,
+      "shares_other_players": false,
+      "source": {
+        "asset": "astra-gi.zip",
+        "commit": "286e79a49847be014bb86b5ed3f1e1a14fca58fb",
+        "event": "release",
+        "host": "github.com",
+        "release_tag": "v0.2.1",
+        "repo": "mihailinl/astra-repo",
+        "repo_id": 1409552749,
+        "repo_owner_id": 193032699,
+        "sha256": "baf01e94bc256355cfeb90d85a39176015fb2702a66dc12e820319433bd178c7",
+        "size": 758533,
+        "workflow_path": "first-party.json"
+      },
+      "supersedes": [],
+      "target": {
+        "exe": "REPO.exe",
+        "id": 3241660,
+        "store": "steam"
+      },
+      "version": "0.2.1"
+    },
+    "meta": {
+      "accepted_at": 1795892210,
+      "files": {
+        "BepInEx/core/0Harmony.dll": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031",
+        "BepInEx/core/0Harmony.xml": "d1f02fc3ada3a13da307de421225bfe56ebe24064370980979391c4be021672f",
+        "BepInEx/core/0Harmony20.dll": "c755a5ab2712915a32f9a850d580a8c1b70ff1653bc76600f2767aa8ffccc663",
+        "BepInEx/core/BepInEx.Harmony.dll": "00c8f2ac48593e4d45ce4eb26ce4e68b18113c5c489b38b8bf0850f65830d601",
+        "BepInEx/core/BepInEx.Harmony.xml": "a04fedf08f7c81f5d01aba6f2840a7ffce50b79bbd24587d8dbe69ab73971d29",
+        "BepInEx/core/BepInEx.Preloader.dll": "55d3895351a9d16b63b6f35f1c01b44ac650979e853d0bd3a442b92a082af64f",
+        "BepInEx/core/BepInEx.Preloader.xml": "33275b2783b7b99495a02c098ee86d6a9a2783e884a5c9369021f20c94cf99e7",
+        "BepInEx/core/BepInEx.dll": "8255b28902886085c578b9e427d3073c97002db85176d2090cdeda90ef14ce70",
+        "BepInEx/core/BepInEx.xml": "7ba2266061b9f8a9f146218a312bfdd0d7f2b53a99a7e66c957215c6b66ca0d7",
+        "BepInEx/core/HarmonyXInterop.dll": "7ce1342d3afa0334b59a3e38c0aed15e162b9abe9d46f95f34be44af47f3b493",
+        "BepInEx/core/Mono.Cecil.Mdb.dll": "5896d1898f616701fff18f3b2c71e6b844d2390ef9f41e1c5fccce8cb27c698e",
+        "BepInEx/core/Mono.Cecil.Pdb.dll": "174db44a067f58561510af746f3caeb032037762c57a31c8d9ee32db25174984",
+        "BepInEx/core/Mono.Cecil.Rocks.dll": "54ac539fb5ddc8b44c0e9acd0fcb7324f89d1a072edf8ebc1b06dd691e3d3927",
+        "BepInEx/core/Mono.Cecil.dll": "7ae470288fff4a402899c254d0a76cefef55877f5c54f96e83c797cc5bb6e2f6",
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": "40e49bb314391cd7bddc2644f8553eeba92c194b940836b103df16955c464e0c",
+        "BepInEx/core/MonoMod.RuntimeDetour.xml": "54887808960d156550b37d602d08847607aa9e908d039f2765fb0b5e79394aa4",
+        "BepInEx/core/MonoMod.Utils.dll": "9d1495f147ac93c4f81f84538c1a326e8f8a6aefc78d6289d798f3ce1162c5e9",
+        "BepInEx/core/MonoMod.Utils.xml": "0577b362023a3432d6e8d7934c5eddc3e08fdbb19e191af083e341562c5ede38",
+        "BepInEx/plugins/Astra/Astra.Bridge.Core.dll": "c6a73d80a8b8f2cc562a3b05c6030a9f7153b0514c0912b1c1578c17f3d5c491",
+        "BepInEx/plugins/Astra/Astra.Hdrp.dll": "58b0aa6766f6678a5023a3000da1dfa8a4248ade9eb9fb467fc2400dd137c1fe",
+        "BepInEx/plugins/Astra/Astra.Unity.dll": "e7ea8c1d0986ad0590b5a353ce80032480468904b85b6a50f6f5bb50d4a3cead",
+        "BepInEx/plugins/Astra/Astra.Urp17.dll": "82b5e5570d986b60fc442e3a94720b461cf6ac46717f51d1237ca598b8794d9f",
+        "BepInEx/plugins/Astra/astra-item.json": "4843d16dfd8641f0bf5caabca95397cb3c7645520c39e12cb1bdd6de8b008bcf",
+        "BepInEx/plugins/AstraRepo/AstraRepo.dll": "6566ff92f024ca8f2e3b5a2b4eca80ca2902402cee49cbf1c44664ea8776a0ca",
+        "BepInEx/plugins/AstraRepo/astra-item.json": "d361b1c02a25a0aee872be9bee48597b21cdd3dad0daa740636bc5963d093695",
+        "astra-gi.toml": "83ef813df1f2b373d6655ab29935a728abf376340b3c2f3920829f74ac2319ad",
+        "doorstop_config.ini": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b",
+        "licenses/BepInEx-LICENSE.txt": "b27e744148b2b3be23b6e1907182c63d7e7f6edc4f900cef4f3c2aa2f16f36ec",
+        "licenses/astra-foundation-LICENSE.txt": "293d901cd0600e7de392961e180cd675303dd27b375655739b3eafb8f2ec5cb3",
+        "licenses/astra-repo-LICENSE.txt": "3dee37bd4bea19eadc16803fcebeb4eb3bc46e0de72fc0c86ce264df71dd328e",
+        "winhttp.dll": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+      },
+      "first_party": true,
+      "manifest_id": "astra.repo",
+      "online": [],
+      "probe": {
+        "name": "gi-probe",
+        "notices": [],
+        "ran": [
+          "check",
+          "compat"
+        ],
+        "source_tree_sha256": "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
+        "version": "0.7.0"
+      },
+      "released_at": 1795889004,
+      "status": "listed"
+    }
+  },
+  {
+    "entry": {
+      "built_on": null,
+      "capabilities": [
+        "companion.presentation"
+      ],
+      "changes": {
+        "config_writes": true,
+        "game_files": [
+          {
+            "loader": "allowlisted",
+            "path": "winhttp.dll",
+            "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+          },
+          {
+            "loader": "none",
+            "path": "doorstop_config.ini",
+            "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+          }
+        ],
+        "launch": true,
+        "profile_files": true
+      },
+      "code_changed": false,
+      "content": [],
+      "descriptor": null,
+      "descriptor_sha256": null,
+      "engine_versions": null,
+      "flags": [],
+      "foundation": null,
+      "id": "mihailinl/astra-peak",
+      "kind": "integration",
+      "licence": "MIT",
+      "link": null,
+      "min_astra": "0.2.8",
+      "notes": {},
+      "publisher": {
+        "account": "mihailinl",
+        "repo_id": 1409552680,
+        "repo_owner_id": 193032699
+      },
+      "review": "unchecked",
+      "schema": 1,
+      "schema_digests": {},
+      "sdk": null,
+      "shares_other_players": false,
+      "source": {
+        "asset": "astra-gi.zip",
+        "commit": "8a026ba6fda3c918dd7ac1699034e61d97d494b0",
+        "event": "release",
+        "host": "github.com",
+        "release_tag": "v0.3.2",
+        "repo": "mihailinl/astra-peak",
+        "repo_id": 1409552680,
+        "repo_owner_id": 193032699,
+        "sha256": "7315372765c2f7c54f52d7d25ab6c0b9f027ab60c0ab1ce86f274b5794eeba12",
+        "size": 837410,
+        "workflow_path": "first-party.json"
+      },
+      "supersedes": [],
+      "target": {
+        "exe": "PEAK.exe",
+        "id": 3527290,
+        "store": "steam"
+      },
+      "version": "0.3.2"
+    },
+    "meta": {
+      "accepted_at": 1795892210,
+      "files": {
+        "BepInEx/core/0Harmony.dll": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031",
+        "BepInEx/core/0Harmony.xml": "d1f02fc3ada3a13da307de421225bfe56ebe24064370980979391c4be021672f",
+        "BepInEx/core/0Harmony20.dll": "c755a5ab2712915a32f9a850d580a8c1b70ff1653bc76600f2767aa8ffccc663",
+        "BepInEx/core/BepInEx.Harmony.dll": "00c8f2ac48593e4d45ce4eb26ce4e68b18113c5c489b38b8bf0850f65830d601",
+        "BepInEx/core/BepInEx.Harmony.xml": "a04fedf08f7c81f5d01aba6f2840a7ffce50b79bbd24587d8dbe69ab73971d29",
+        "BepInEx/core/BepInEx.Preloader.dll": "55d3895351a9d16b63b6f35f1c01b44ac650979e853d0bd3a442b92a082af64f",
+        "BepInEx/core/BepInEx.Preloader.xml": "33275b2783b7b99495a02c098ee86d6a9a2783e884a5c9369021f20c94cf99e7",
+        "BepInEx/core/BepInEx.dll": "8255b28902886085c578b9e427d3073c97002db85176d2090cdeda90ef14ce70",
+        "BepInEx/core/BepInEx.xml": "7ba2266061b9f8a9f146218a312bfdd0d7f2b53a99a7e66c957215c6b66ca0d7",
+        "BepInEx/core/HarmonyXInterop.dll": "7ce1342d3afa0334b59a3e38c0aed15e162b9abe9d46f95f34be44af47f3b493",
+        "BepInEx/core/Mono.Cecil.Mdb.dll": "5896d1898f616701fff18f3b2c71e6b844d2390ef9f41e1c5fccce8cb27c698e",
+        "BepInEx/core/Mono.Cecil.Pdb.dll": "174db44a067f58561510af746f3caeb032037762c57a31c8d9ee32db25174984",
+        "BepInEx/core/Mono.Cecil.Rocks.dll": "54ac539fb5ddc8b44c0e9acd0fcb7324f89d1a072edf8ebc1b06dd691e3d3927",
+        "BepInEx/core/Mono.Cecil.dll": "7ae470288fff4a402899c254d0a76cefef55877f5c54f96e83c797cc5bb6e2f6",
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": "40e49bb314391cd7bddc2644f8553eeba92c194b940836b103df16955c464e0c",
+        "BepInEx/core/MonoMod.RuntimeDetour.xml": "54887808960d156550b37d602d08847607aa9e908d039f2765fb0b5e79394aa4",
+        "BepInEx/core/MonoMod.Utils.dll": "9d1495f147ac93c4f81f84538c1a326e8f8a6aefc78d6289d798f3ce1162c5e9",
+        "BepInEx/core/MonoMod.Utils.xml": "0577b362023a3432d6e8d7934c5eddc3e08fdbb19e191af083e341562c5ede38",
+        "BepInEx/plugins/Astra/Astra.Bridge.Core.dll": "5fee3be5cd31cdae5ea79a0d7fd55a16f7cb0d6ef78120e0f133e2ba23f4b03c",
+        "BepInEx/plugins/Astra/Astra.Hdrp.dll": "63b96e6d195d60209a06aecdfc6555e077baa4ac7b19fb394f1fb1ad5b7e6c1e",
+        "BepInEx/plugins/Astra/Astra.Unity.dll": "866285524b17a2b70e43ee3e5af88536ce108751c86490e7065cc03558cdb53b",
+        "BepInEx/plugins/Astra/Astra.Urp14.dll": "d1107b854880c806b8b092ec5af14ba0cebe948405d1eb4b38c76e08bc5aa02d",
+        "BepInEx/plugins/Astra/Astra.Urp17.dll": "71a9616c5e8ae463186b3a0d114ec16ec4dab2af565572642d042cad6f132638",
+        "BepInEx/plugins/Astra/astra-item.json": "c172d8ea68a535ed9477396b12771caf3ff8d14a923bf79b2acebe9646828496",
+        "BepInEx/plugins/AstraPeak/AstraPeak.dll": "ef5fc7b657526ee0b53f54c2bf6379221933b7fec685da2ef7746b421e3a8604",
+        "BepInEx/plugins/AstraPeak/astra-item.json": "de2a3dd5d41778d564f33dbcc9d94fb0b24e81984985a8cc9f4f63aac2d1d895",
+        "astra-gi.toml": "4039a5af7b8d1c0c3930a39fc7874d10111500ecfcf1697b9db9b09eb49e55e5",
+        "doorstop_config.ini": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b",
+        "licenses/BepInEx-LICENSE.txt": "b27e744148b2b3be23b6e1907182c63d7e7f6edc4f900cef4f3c2aa2f16f36ec",
+        "licenses/astra-foundation-LICENSE.txt": "293d901cd0600e7de392961e180cd675303dd27b375655739b3eafb8f2ec5cb3",
+        "licenses/astra-peak-LICENSE.txt": "3dee37bd4bea19eadc16803fcebeb4eb3bc46e0de72fc0c86ce264df71dd328e",
+        "winhttp.dll": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+      },
+      "first_party": true,
+      "manifest_id": "astra.peak",
+      "online": [],
+      "probe": {
+        "name": "gi-probe",
+        "notices": [],
+        "ran": [
+          "check",
+          "compat"
+        ],
+        "source_tree_sha256": "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
+        "version": "0.7.0"
+      },
+      "released_at": 1795888981,
+      "status": "listed"
+    }
+  },
+  {
+    "entry": {
+      "built_on": null,
+      "capabilities": [
+        "companion.presentation"
+      ],
+      "changes": {
+        "config_writes": true,
+        "game_files": [
+          {
+            "loader": "allowlisted",
+            "path": "winhttp.dll",
+            "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+          },
+          {
+            "loader": "none",
+            "path": "doorstop_config.ini",
+            "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+          }
+        ],
+        "launch": true,
+        "profile_files": true
+      },
+      "code_changed": false,
+      "content": [],
+      "descriptor": null,
+      "descriptor_sha256": null,
+      "engine_versions": null,
+      "flags": [],
+      "foundation": null,
+      "id": "mihailinl/astra-content-warning",
+      "kind": "integration",
+      "licence": "MIT",
+      "link": null,
+      "min_astra": "0.2.8",
+      "notes": {},
+      "publisher": {
+        "account": "mihailinl",
+        "repo_id": 1409552609,
+        "repo_owner_id": 193032699
+      },
+      "review": "unchecked",
+      "schema": 1,
+      "schema_digests": {},
+      "sdk": null,
+      "shares_other_players": false,
+      "source": {
+        "asset": "astra-gi.zip",
+        "commit": "ce27fdcfda755392269da8daed27a4bf1123db2f",
+        "event": "release",
+        "host": "github.com",
+        "release_tag": "v0.2.1",
+        "repo": "mihailinl/astra-content-warning",
+        "repo_id": 1409552609,
+        "repo_owner_id": 193032699,
+        "sha256": "933f1962c4019ebe7044c50903143c0fbadef8805278f206044e8964a66f74f1",
+        "size": 759080,
+        "workflow_path": "first-party.json"
+      },
+      "supersedes": [],
+      "target": {
+        "exe": "Content Warning.exe",
+        "id": 2881650,
+        "store": "steam"
+      },
+      "version": "0.2.1"
+    },
+    "meta": {
+      "accepted_at": 1795892210,
+      "files": {
+        "BepInEx/core/0Harmony.dll": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031",
+        "BepInEx/core/0Harmony.xml": "d1f02fc3ada3a13da307de421225bfe56ebe24064370980979391c4be021672f",
+        "BepInEx/core/0Harmony20.dll": "c755a5ab2712915a32f9a850d580a8c1b70ff1653bc76600f2767aa8ffccc663",
+        "BepInEx/core/BepInEx.Harmony.dll": "00c8f2ac48593e4d45ce4eb26ce4e68b18113c5c489b38b8bf0850f65830d601",
+        "BepInEx/core/BepInEx.Harmony.xml": "a04fedf08f7c81f5d01aba6f2840a7ffce50b79bbd24587d8dbe69ab73971d29",
+        "BepInEx/core/BepInEx.Preloader.dll": "55d3895351a9d16b63b6f35f1c01b44ac650979e853d0bd3a442b92a082af64f",
+        "BepInEx/core/BepInEx.Preloader.xml": "33275b2783b7b99495a02c098ee86d6a9a2783e884a5c9369021f20c94cf99e7",
+        "BepInEx/core/BepInEx.dll": "8255b28902886085c578b9e427d3073c97002db85176d2090cdeda90ef14ce70",
+        "BepInEx/core/BepInEx.xml": "7ba2266061b9f8a9f146218a312bfdd0d7f2b53a99a7e66c957215c6b66ca0d7",
+        "BepInEx/core/HarmonyXInterop.dll": "7ce1342d3afa0334b59a3e38c0aed15e162b9abe9d46f95f34be44af47f3b493",
+        "BepInEx/core/Mono.Cecil.Mdb.dll": "5896d1898f616701fff18f3b2c71e6b844d2390ef9f41e1c5fccce8cb27c698e",
+        "BepInEx/core/Mono.Cecil.Pdb.dll": "174db44a067f58561510af746f3caeb032037762c57a31c8d9ee32db25174984",
+        "BepInEx/core/Mono.Cecil.Rocks.dll": "54ac539fb5ddc8b44c0e9acd0fcb7324f89d1a072edf8ebc1b06dd691e3d3927",
+        "BepInEx/core/Mono.Cecil.dll": "7ae470288fff4a402899c254d0a76cefef55877f5c54f96e83c797cc5bb6e2f6",
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": "40e49bb314391cd7bddc2644f8553eeba92c194b940836b103df16955c464e0c",
+        "BepInEx/core/MonoMod.RuntimeDetour.xml": "54887808960d156550b37d602d08847607aa9e908d039f2765fb0b5e79394aa4",
+        "BepInEx/core/MonoMod.Utils.dll": "9d1495f147ac93c4f81f84538c1a326e8f8a6aefc78d6289d798f3ce1162c5e9",
+        "BepInEx/core/MonoMod.Utils.xml": "0577b362023a3432d6e8d7934c5eddc3e08fdbb19e191af083e341562c5ede38",
+        "BepInEx/plugins/Astra/Astra.Bridge.Core.dll": "c6a73d80a8b8f2cc562a3b05c6030a9f7153b0514c0912b1c1578c17f3d5c491",
+        "BepInEx/plugins/Astra/Astra.Hdrp.dll": "58b0aa6766f6678a5023a3000da1dfa8a4248ade9eb9fb467fc2400dd137c1fe",
+        "BepInEx/plugins/Astra/Astra.Unity.dll": "e7ea8c1d0986ad0590b5a353ce80032480468904b85b6a50f6f5bb50d4a3cead",
+        "BepInEx/plugins/Astra/Astra.Urp17.dll": "82b5e5570d986b60fc442e3a94720b461cf6ac46717f51d1237ca598b8794d9f",
+        "BepInEx/plugins/Astra/astra-item.json": "4843d16dfd8641f0bf5caabca95397cb3c7645520c39e12cb1bdd6de8b008bcf",
+        "BepInEx/plugins/AstraContentWarning/AstraContentWarning.dll": "44f16cbf4de8ad8175cb950b237ac6144ab41015bc28544f3408486788be0632",
+        "BepInEx/plugins/AstraContentWarning/astra-item.json": "702901b2dc56fab4bad1d9d71d16b1bb83b225e1d22c8fd329f6dae6789c5cc7",
+        "astra-gi.toml": "a350023c029961d4378e93f517ee45e9605fc0141fab6cb874b3bce0daae079a",
+        "doorstop_config.ini": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b",
+        "licenses/BepInEx-LICENSE.txt": "b27e744148b2b3be23b6e1907182c63d7e7f6edc4f900cef4f3c2aa2f16f36ec",
+        "licenses/astra-content-warning-LICENSE.txt": "3dee37bd4bea19eadc16803fcebeb4eb3bc46e0de72fc0c86ce264df71dd328e",
+        "licenses/astra-foundation-LICENSE.txt": "293d901cd0600e7de392961e180cd675303dd27b375655739b3eafb8f2ec5cb3",
+        "winhttp.dll": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+      },
+      "first_party": true,
+      "manifest_id": "astra.content-warning",
+      "online": [],
+      "probe": {
+        "name": "gi-probe",
+        "notices": [],
+        "ran": [
+          "check",
+          "compat"
+        ],
+        "source_tree_sha256": "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
+        "version": "0.7.0"
+      },
+      "released_at": 1795888992,
+      "status": "listed"
+    }
+  },
+  {
+    "entry": {
+      "built_on": null,
+      "capabilities": [
+        "companion.presentation"
+      ],
+      "changes": {
+        "config_writes": true,
+        "game_files": [
+          {
+            "loader": "allowlisted",
+            "path": "winhttp.dll",
+            "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+          },
+          {
+            "loader": "none",
+            "path": "doorstop_config.ini",
+            "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+          }
+        ],
+        "launch": true,
+        "profile_files": true
+      },
+      "code_changed": false,
+      "content": [],
+      "descriptor": null,
+      "descriptor_sha256": null,
+      "engine_versions": null,
+      "flags": [],
+      "foundation": null,
+      "id": "mihailinl/astra-lethal-company",
+      "kind": "integration",
+      "licence": "MIT",
+      "link": null,
+      "min_astra": "0.2.8",
+      "notes": {},
+      "publisher": {
+        "account": "mihailinl",
+        "repo_id": 1409552539,
+        "repo_owner_id": 193032699
+      },
+      "review": "unchecked",
+      "schema": 1,
+      "schema_digests": {},
+      "sdk": null,
+      "shares_other_players": false,
+      "source": {
+        "asset": "astra-gi.zip",
+        "commit": "74fe149cde167e4fc9b7bc2debf76a37d3b33a7b",
+        "event": "release",
+        "host": "github.com",
+        "release_tag": "v0.2.3",
+        "repo": "mihailinl/astra-lethal",
+        "repo_id": 1409552539,
+        "repo_owner_id": 193032699,
+        "sha256": "1d6da8f73f41099ee6713cdc5ae66da7f8c1f82928d772f674948186927c883e",
+        "size": 758744,
+        "workflow_path": "first-party.json"
+      },
+      "supersedes": [],
+      "target": {
+        "exe": "Lethal Company.exe",
+        "id": 1966720,
+        "store": "steam"
+      },
+      "version": "0.2.3"
+    },
+    "meta": {
+      "accepted_at": 1795892210,
+      "files": {
+        "BepInEx/core/0Harmony.dll": "1a21cc03424fc82c3dd1346905d16494536b9595ae4162228d99fb7c285c1031",
+        "BepInEx/core/0Harmony.xml": "d1f02fc3ada3a13da307de421225bfe56ebe24064370980979391c4be021672f",
+        "BepInEx/core/0Harmony20.dll": "c755a5ab2712915a32f9a850d580a8c1b70ff1653bc76600f2767aa8ffccc663",
+        "BepInEx/core/BepInEx.Harmony.dll": "00c8f2ac48593e4d45ce4eb26ce4e68b18113c5c489b38b8bf0850f65830d601",
+        "BepInEx/core/BepInEx.Harmony.xml": "a04fedf08f7c81f5d01aba6f2840a7ffce50b79bbd24587d8dbe69ab73971d29",
+        "BepInEx/core/BepInEx.Preloader.dll": "55d3895351a9d16b63b6f35f1c01b44ac650979e853d0bd3a442b92a082af64f",
+        "BepInEx/core/BepInEx.Preloader.xml": "33275b2783b7b99495a02c098ee86d6a9a2783e884a5c9369021f20c94cf99e7",
+        "BepInEx/core/BepInEx.dll": "8255b28902886085c578b9e427d3073c97002db85176d2090cdeda90ef14ce70",
+        "BepInEx/core/BepInEx.xml": "7ba2266061b9f8a9f146218a312bfdd0d7f2b53a99a7e66c957215c6b66ca0d7",
+        "BepInEx/core/HarmonyXInterop.dll": "7ce1342d3afa0334b59a3e38c0aed15e162b9abe9d46f95f34be44af47f3b493",
+        "BepInEx/core/Mono.Cecil.Mdb.dll": "5896d1898f616701fff18f3b2c71e6b844d2390ef9f41e1c5fccce8cb27c698e",
+        "BepInEx/core/Mono.Cecil.Pdb.dll": "174db44a067f58561510af746f3caeb032037762c57a31c8d9ee32db25174984",
+        "BepInEx/core/Mono.Cecil.Rocks.dll": "54ac539fb5ddc8b44c0e9acd0fcb7324f89d1a072edf8ebc1b06dd691e3d3927",
+        "BepInEx/core/Mono.Cecil.dll": "7ae470288fff4a402899c254d0a76cefef55877f5c54f96e83c797cc5bb6e2f6",
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": "40e49bb314391cd7bddc2644f8553eeba92c194b940836b103df16955c464e0c",
+        "BepInEx/core/MonoMod.RuntimeDetour.xml": "54887808960d156550b37d602d08847607aa9e908d039f2765fb0b5e79394aa4",
+        "BepInEx/core/MonoMod.Utils.dll": "9d1495f147ac93c4f81f84538c1a326e8f8a6aefc78d6289d798f3ce1162c5e9",
+        "BepInEx/core/MonoMod.Utils.xml": "0577b362023a3432d6e8d7934c5eddc3e08fdbb19e191af083e341562c5ede38",
+        "BepInEx/plugins/Astra/Astra.Bridge.Core.dll": "c6a73d80a8b8f2cc562a3b05c6030a9f7153b0514c0912b1c1578c17f3d5c491",
+        "BepInEx/plugins/Astra/Astra.Hdrp.dll": "58b0aa6766f6678a5023a3000da1dfa8a4248ade9eb9fb467fc2400dd137c1fe",
+        "BepInEx/plugins/Astra/Astra.Unity.dll": "e7ea8c1d0986ad0590b5a353ce80032480468904b85b6a50f6f5bb50d4a3cead",
+        "BepInEx/plugins/Astra/Astra.Urp17.dll": "82b5e5570d986b60fc442e3a94720b461cf6ac46717f51d1237ca598b8794d9f",
+        "BepInEx/plugins/Astra/astra-item.json": "4843d16dfd8641f0bf5caabca95397cb3c7645520c39e12cb1bdd6de8b008bcf",
+        "BepInEx/plugins/AstraLethal/AstraLethal.dll": "5d470ff9ed414fe49a5e279931048771fe2f9396b17e657bff0369ce39824d7d",
+        "BepInEx/plugins/AstraLethal/astra-item.json": "a10de4dac19bc4ea7d76b59126184259a29354c32af21b0e71f51b33b89bfdd7",
+        "astra-gi.toml": "dc03dd5701c8ca4aba84d48b4e24df1f680c9cff433547b87cae51cace751432",
+        "doorstop_config.ini": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b",
+        "licenses/BepInEx-LICENSE.txt": "b27e744148b2b3be23b6e1907182c63d7e7f6edc4f900cef4f3c2aa2f16f36ec",
+        "licenses/astra-foundation-LICENSE.txt": "293d901cd0600e7de392961e180cd675303dd27b375655739b3eafb8f2ec5cb3",
+        "licenses/astra-lethal-LICENSE.txt": "3dee37bd4bea19eadc16803fcebeb4eb3bc46e0de72fc0c86ce264df71dd328e",
+        "winhttp.dll": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+      },
+      "first_party": true,
+      "manifest_id": "astra.lethal-company",
+      "online": [],
+      "probe": {
+        "name": "gi-probe",
+        "notices": [],
+        "ran": [
+          "check",
+          "compat"
+        ],
+        "source_tree_sha256": "d4c11518de9d35fbf76cb38214f79830d05b68fec3c80d0eec3777d860546312",
+        "version": "0.7.0"
+      },
+      "released_at": 1795888999,
+      "status": "listed"
+    }
+  }
+]

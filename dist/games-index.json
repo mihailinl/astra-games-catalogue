@@ -3,16 +3,281 @@
   "signatures": [
     {
       "key_id": "astra-games-2026a",
-      "sig": "7Be4XrRLig84dleEXc7Xu0gNtIMXm7qAiU++Zt37mnw/n0q7l7tUZk1Ap7a9SSEeCdA5cW3fDzJRzBZ74pSWAA=="
+      "sig": "UcOjeEL5Vt6/yiZKvz1jOcbSztFz1qWNkA/uCVY6qhZrJGPyQlYukQNt4xVKPznkudVMkZKMR4FXilpzLPj7BQ=="
     }
   ],
   "signed": {
     "anticheat": [],
     "engine_codes": {},
-    "entries": [],
-    "expires_at": 1796494683,
+    "entries": [
+      {
+        "built_on": null,
+        "capabilities": [
+          "companion.presentation"
+        ],
+        "changes": {
+          "config_writes": true,
+          "game_files": [
+            {
+              "loader": "allowlisted",
+              "path": "winhttp.dll",
+              "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+            },
+            {
+              "loader": "none",
+              "path": "doorstop_config.ini",
+              "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+            }
+          ],
+          "launch": true,
+          "profile_files": true
+        },
+        "code_changed": false,
+        "content": [],
+        "descriptor": null,
+        "descriptor_sha256": null,
+        "engine_versions": null,
+        "flags": [],
+        "foundation": null,
+        "id": "mihailinl/astra-content-warning",
+        "kind": "integration",
+        "licence": "MIT",
+        "link": null,
+        "min_astra": "0.2.8",
+        "notes": {},
+        "publisher": {
+          "account": "mihailinl",
+          "repo_id": 1409552609,
+          "repo_owner_id": 193032699
+        },
+        "review": "unchecked",
+        "schema": 1,
+        "schema_digests": {},
+        "sdk": null,
+        "shares_other_players": false,
+        "source": {
+          "asset": "astra-gi.zip",
+          "commit": "ce27fdcfda755392269da8daed27a4bf1123db2f",
+          "event": "release",
+          "host": "github.com",
+          "release_tag": "v0.2.1",
+          "repo": "mihailinl/astra-content-warning",
+          "repo_id": 1409552609,
+          "repo_owner_id": 193032699,
+          "sha256": "933f1962c4019ebe7044c50903143c0fbadef8805278f206044e8964a66f74f1",
+          "size": 759080,
+          "workflow_path": "first-party.json"
+        },
+        "supersedes": [],
+        "target": {
+          "exe": "Content Warning.exe",
+          "id": 2881650,
+          "store": "steam"
+        },
+        "version": "0.2.1"
+      },
+      {
+        "built_on": null,
+        "capabilities": [
+          "companion.presentation"
+        ],
+        "changes": {
+          "config_writes": true,
+          "game_files": [
+            {
+              "loader": "allowlisted",
+              "path": "winhttp.dll",
+              "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+            },
+            {
+              "loader": "none",
+              "path": "doorstop_config.ini",
+              "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+            }
+          ],
+          "launch": true,
+          "profile_files": true
+        },
+        "code_changed": false,
+        "content": [],
+        "descriptor": null,
+        "descriptor_sha256": null,
+        "engine_versions": null,
+        "flags": [],
+        "foundation": null,
+        "id": "mihailinl/astra-lethal-company",
+        "kind": "integration",
+        "licence": "MIT",
+        "link": null,
+        "min_astra": "0.2.8",
+        "notes": {},
+        "publisher": {
+          "account": "mihailinl",
+          "repo_id": 1409552539,
+          "repo_owner_id": 193032699
+        },
+        "review": "unchecked",
+        "schema": 1,
+        "schema_digests": {},
+        "sdk": null,
+        "shares_other_players": false,
+        "source": {
+          "asset": "astra-gi.zip",
+          "commit": "74fe149cde167e4fc9b7bc2debf76a37d3b33a7b",
+          "event": "release",
+          "host": "github.com",
+          "release_tag": "v0.2.3",
+          "repo": "mihailinl/astra-lethal",
+          "repo_id": 1409552539,
+          "repo_owner_id": 193032699,
+          "sha256": "1d6da8f73f41099ee6713cdc5ae66da7f8c1f82928d772f674948186927c883e",
+          "size": 758744,
+          "workflow_path": "first-party.json"
+        },
+        "supersedes": [],
+        "target": {
+          "exe": "Lethal Company.exe",
+          "id": 1966720,
+          "store": "steam"
+        },
+        "version": "0.2.3"
+      },
+      {
+        "built_on": null,
+        "capabilities": [
+          "companion.presentation"
+        ],
+        "changes": {
+          "config_writes": true,
+          "game_files": [
+            {
+              "loader": "allowlisted",
+              "path": "winhttp.dll",
+              "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+            },
+            {
+              "loader": "none",
+              "path": "doorstop_config.ini",
+              "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+            }
+          ],
+          "launch": true,
+          "profile_files": true
+        },
+        "code_changed": false,
+        "content": [],
+        "descriptor": null,
+        "descriptor_sha256": null,
+        "engine_versions": null,
+        "flags": [],
+        "foundation": null,
+        "id": "mihailinl/astra-peak",
+        "kind": "integration",
+        "licence": "MIT",
+        "link": null,
+        "min_astra": "0.2.8",
+        "notes": {},
+        "publisher": {
+          "account": "mihailinl",
+          "repo_id": 1409552680,
+          "repo_owner_id": 193032699
+        },
+        "review": "unchecked",
+        "schema": 1,
+        "schema_digests": {},
+        "sdk": null,
+        "shares_other_players": false,
+        "source": {
+          "asset": "astra-gi.zip",
+          "commit": "8a026ba6fda3c918dd7ac1699034e61d97d494b0",
+          "event": "release",
+          "host": "github.com",
+          "release_tag": "v0.3.2",
+          "repo": "mihailinl/astra-peak",
+          "repo_id": 1409552680,
+          "repo_owner_id": 193032699,
+          "sha256": "7315372765c2f7c54f52d7d25ab6c0b9f027ab60c0ab1ce86f274b5794eeba12",
+          "size": 837410,
+          "workflow_path": "first-party.json"
+        },
+        "supersedes": [],
+        "target": {
+          "exe": "PEAK.exe",
+          "id": 3527290,
+          "store": "steam"
+        },
+        "version": "0.3.2"
+      },
+      {
+        "built_on": null,
+        "capabilities": [
+          "companion.presentation"
+        ],
+        "changes": {
+          "config_writes": true,
+          "game_files": [
+            {
+              "loader": "allowlisted",
+              "path": "winhttp.dll",
+              "sha256": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c"
+            },
+            {
+              "loader": "none",
+              "path": "doorstop_config.ini",
+              "sha256": "1da2c0676b1b73b9c40853d5661bbc8c6cb0247ebd9150ae45a372c9d33f8c1b"
+            }
+          ],
+          "launch": true,
+          "profile_files": true
+        },
+        "code_changed": false,
+        "content": [],
+        "descriptor": null,
+        "descriptor_sha256": null,
+        "engine_versions": null,
+        "flags": [],
+        "foundation": null,
+        "id": "mihailinl/astra-repo",
+        "kind": "integration",
+        "licence": "MIT",
+        "link": null,
+        "min_astra": "0.2.8",
+        "notes": {},
+        "publisher": {
+          "account": "mihailinl",
+          "repo_id": 1409552749,
+          "repo_owner_id": 193032699
+        },
+        "review": "unchecked",
+        "schema": 1,
+        "schema_digests": {},
+        "sdk": null,
+        "shares_other_players": false,
+        "source": {
+          "asset": "astra-gi.zip",
+          "commit": "286e79a49847be014bb86b5ed3f1e1a14fca58fb",
+          "event": "release",
+          "host": "github.com",
+          "release_tag": "v0.2.1",
+          "repo": "mihailinl/astra-repo",
+          "repo_id": 1409552749,
+          "repo_owner_id": 193032699,
+          "sha256": "baf01e94bc256355cfeb90d85a39176015fb2702a66dc12e820319433bd178c7",
+          "size": 758533,
+          "workflow_path": "first-party.json"
+        },
+        "supersedes": [],
+        "target": {
+          "exe": "REPO.exe",
+          "id": 3241660,
+          "store": "steam"
+        },
+        "version": "0.2.1"
+      }
+    ],
+    "expires_at": 1796497010,
     "games": [],
-    "issued_at": 1795889883,
+    "issued_at": 1795892210,
     "key_id": "games-current",
     "loaders": [
       {
@@ -22,6 +287,6 @@
       }
     ],
     "schema": "astra.games.index/1",
-    "serial": 1795889883
+    "serial": 1795892210
   }
 }
