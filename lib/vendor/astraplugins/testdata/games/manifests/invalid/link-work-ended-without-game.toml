@@ -1,0 +1,42 @@
+# VENDORED from mihailinl/AstraPlugins at fc53101df3b229191cc865b07ca3d269c84da2bd, path testdata/games/manifests/invalid/link-work-ended-without-game.toml.
+# Do not edit. lib/vendored.mjs (canary K9/K12) compares everything below the next line with that commit.
+# END OF VENDOR HEADER
+# Invalid (semantic, work-ended-misdeclared): work_ended from a GI with no danger = "game" tool, so no
+# work of hers that could end (link-v1.md §5 "work_ended"). The schema alone passes it.
+schema = 1
+
+[integration]
+id = "someone.viking-helper"
+name = "Astra helps in a viking game"
+version = "0.3.0"
+authors = ["someone"]
+license = "MIT"
+repo = "https://github.com/someone/viking-helper"
+
+[integration.capabilities]
+companion = ["presentation"]
+
+[integration.link]
+context = "astra/context.json"
+shares_other_players = false
+
+[[integration.link.tools]]
+name = "bag_contents"
+description = "Tool bag_contents"
+params = "astra/tools/bag_contents.json"
+result = "astra/tools/bag_contents.result.json"
+danger = "low"
+
+[[integration.link.events]]
+name = "work_ended"
+data = "astra/events/work_ended.json"
+
+[target]
+steam_appid = 892970
+exe = "valheim.exe"
+platforms = ["windows-x64", "linux-proton"]
+anti_cheat = "none"
+
+[[files]]
+from = "BepInEx/plugins/**"
+to = "${profile}/BepInEx/plugins/"
