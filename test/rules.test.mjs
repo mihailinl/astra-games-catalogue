@@ -32,6 +32,11 @@ const RULE_CODE = {
   "capability-undeclared": CODES.E_CAPABILITY_UNDECLARED,
   "reserved-id": CODES.E_RESERVED_ID,
   "reserved-name": CODES.E_RESERVED_NAME,
+  "game-without-stop": CODES.E_GAME_WITHOUT_STOP,
+  "stops-not-low": CODES.E_STOPS_NOT_LOW,
+  "tools-over-16-without-game": CODES.E_TOOLS_OVER_16_WITHOUT_GAME,
+  "work-ended-misdeclared": CODES.E_WORK_ENDED_MISDECLARED,
+  "knowledge-without-licence": CODES.E_KNOWLEDGE_WITHOUT_LICENCE,
 };
 
 for (const v of vectors.manifests.valid) {
